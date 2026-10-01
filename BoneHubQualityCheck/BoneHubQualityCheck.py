@@ -56,7 +56,6 @@ from slicer.util import VTKObservationMixin
 from BoneHubQualityCheckLib import QCClientError
 from BoneHubQualityCheckLib.labels import (
     LABEL_STATUS_VALUES,
-    REJECT_REASONS,
     LabelMap,
     distinct_color,
     label_color,
@@ -102,11 +101,11 @@ upload the correction.
 instead, on the server's review page, and the key of an account that is a reviewer only is
 refused here.
 <p>Reviewers judge each subject first. You are handed the subjects they send back, with a
-label rejected (it needs correction, or should not be there) or a bone reported missing, and
-the subjects that have no segmentation yet. The <i>Subject</i> section says why a subject came
-to you, with the administrator's requests and the history of its quality check, and the labels
-table marks the rejected and missing labels. A missing bone is picked for <i>Add segment</i>
-already.
+label rejected or a bone reported missing, and the subjects that have no segmentation yet. A
+rejected label is yours to judge: correct it, or delete its segment if the bone should not be
+there. The <i>Subject</i> section says why a subject came to you, with the administrator's
+requests and the history of its quality check, and the labels table marks the rejected and
+missing labels. A missing bone is picked for <i>Add segment</i> already.
 <p>The segmentation you are sent is the one under review, which may be an earlier editor's
 correction waiting on the server; the <i>Subject</i> section says so. A subject sent without a
 segmentation starts from an empty one on the image: add each label with <i>Add segment</i> and
@@ -185,9 +184,9 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         for column, tip in enumerate(
             (
                 _("BoneHub label name. A segment's name is its label."),
-                _("What the quality check has made of the label so far, and who said so: rejected, because it "
-                  "needs correction or should not be there; missing; accepted; to review; kept, as the dataset has "
-                  "it reviewed already; or removed."),
+                _("What the quality check has made of the label so far, and who said so: rejected, for you to "
+                  "correct or delete; missing; accepted; to review; kept, as the dataset has it reviewed already; "
+                  "or removed."),
                 _("The label's status in Subject_info today: 0 not available, 1 not reviewed, 2 reviewed. It "
                   "changes only when the administrator approves the subject."),
                 _("Whether this label has a segment in the segmentation you are correcting."),
@@ -568,7 +567,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 item.setForeground(qt.QBrush(_labelTextColour(colour, darkTheme)))
             table.setItem(row, 0, item)
 
-            text, tip, flag = _labelState(inCase.get(name), session.labels, present)
+            text, tip, flag = _labelState(inCase.get(name), present)
             stateItem = _readOnlyItem(text)
             stateItem.setToolTip(tip)
             table.setItem(row, 1, stateItem)
@@ -594,7 +593,6 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         unknown = sorted(name for name, value in inSegmentation.items() if value is None)
         toAdd = [name for name in _missingLabels(session.handout) if name not in inSegmentation]
-        unwanted = [name for name in _rejectedLabels(session.handout, "absent") if name in inSegmentation]
         if unknown:
             self.setStatus(
                 self.ui.labelsSummaryLabel,
@@ -613,8 +611,6 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                            "Segment Editor.")]
             if toAdd:
                 parts.append(_("Reported missing, still to add: {names}.").format(names=", ".join(toAdd)))
-            if unwanted:
-                parts.append(_("A reviewer says these should not be there: {names}.").format(names=", ".join(unwanted)))
             if inSegmentation and ticks:
                 parts.append(_("Of the labels you change or add, and those a reviewer rejected, the ticked ones "
                                "are accepted on your word; the others go back to a reviewer."))
@@ -768,18 +764,13 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         The server compares the upload with the segmentation it replaces, voxel by voxel, so
         only it knows which labels were changed. What can be told here -- the labels taken
-        out, the missing bones still not there, the bones that should not be there and still
-        are -- is spelt out, since the reviewers asked for them.
+        out, and the bones reported missing that are still not there -- is spelt out.
         """
         session = self.logic.session
         handout = session.handout
         labels = sorted(handout.get("labels") or [], key=_anatomicalOrder)
         removed = [label["name"] for label in labels if label.get("painted") and label["name"] not in written]
-        absent = _rejectedLabels(handout, "absent")
-        asked = [name for name in removed if name in absent]
-        unasked = [name for name in removed if name not in absent]
         notAdded = [name for name in _missingLabels(handout) if name not in written]
-        unwanted = [name for name in absent if name in written]
         inCase = _caseLabels(handout)
         empty = [name for name in self.logic.segmentLabelValues() if name not in written and name not in inCase]
 
@@ -790,11 +781,10 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if session.edits_need_review:
             paragraphs.append(_("The labels you changed or added, and those a reviewer rejected, go back to a "
                                 "reviewer. The labels you left alone keep their verdicts."))
-            if asked:
-                paragraphs.append(_("Taken out, as a reviewer asked: {names}.").format(names=", ".join(asked)))
-            if unasked:
-                paragraphs.append(_("Taken out, although nobody asked: {names}. A reviewer must agree before "
-                                    "they are removed.").format(names=", ".join(unasked)))
+            if removed:
+                paragraphs.append(_("Taken out: {names}. A reviewer must agree before they are removed.").format(
+                    names=", ".join(removed)
+                ))
             if notAdded:
                 paragraphs.append(_("Reported missing, and not in your upload: {names}. A reviewer will see that "
                                     "you left them out.").format(names=", ".join(notAdded)))
@@ -808,10 +798,6 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             if notAdded:
                 paragraphs.append(_("Reported missing, and not in your upload: {names}. They stay out of the "
                                     "segmentation.").format(names=", ".join(notAdded)))
-        if unwanted:
-            paragraphs.append(_("A reviewer said these should not be there, and they are still in: {names}.").format(
-                names=", ".join(unwanted)
-            ))
         if empty:
             paragraphs.append(_("Empty, so left out of the upload: {names}.").format(names=", ".join(empty)))
         return "\n\n".join(paragraphs)
@@ -961,7 +947,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 text += "\n" + _("Segmentation only: no image was sent.")
             self.ui.subjectKeyLabel.text = text
             self.ui.expiresLabel.text = _("Lease expires at {when}").format(when=_when(handout.get("expires_at", "?")))
-            self.ui.caseTextBrowser.html = _caseHtml(handout, session.labels, session.user_name)
+            self.ui.caseTextBrowser.html = _caseHtml(handout, session.user_name)
             self.ui.subjectInfoTextBrowser.html = _subjectInfoHtml(handout)
         else:
             self.ui.subjectKeyLabel.text = _("No subject in hand.")
@@ -1375,13 +1361,10 @@ def _anatomicalOrder(label):
     return (value is None, value or 0, label["name"])
 
 
-def _rejectedLabels(handout, reason=None):
-    """The labels a reviewer rejected that the segmentation paints, in anatomical order; with
-    ``reason``, only those rejected for it."""
+def _rejectedLabels(handout):
+    """The labels a reviewer rejected that the segmentation paints, in anatomical order."""
     labels = [
-        label
-        for label in handout.get("labels") or []
-        if label.get("state") == "rejected" and label.get("painted") and reason in (None, label.get("reason"))
+        label for label in handout.get("labels") or [] if label.get("state") == "rejected" and label.get("painted")
     ]
     return [label["name"] for label in sorted(labels, key=_anatomicalOrder)]
 
@@ -1412,14 +1395,13 @@ def _labelTip(name, value, present, ticks):
     return tip
 
 
-def _labelState(label, labels, present):
+def _labelState(label, present):
     """What the quality check has made of a label: a few words for the labels table, a sentence
     for their tooltip, and "rejected" or "missing" when a reviewer sent the label back, so that
     its row stands out.
 
     ``label`` is the label as the handout gives it, None for one the quality check does not
-    know of; ``labels`` the label map, which words the reasons to reject a label; ``present``
-    whether the editor's segmentation paints the label now.
+    know of; ``present`` whether the editor's segmentation paints the label now.
     """
     if label is None:
         if present:
@@ -1435,15 +1417,12 @@ def _labelState(label, labels, present):
         tip += " " + (_("You have added it.") if present else _("Add it with 'Add segment', and paint it."))
         return _("missing") + who, tip, "missing"
     if state == "rejected":
-        reason = labels.reason_text(label.get("reason"))
-        tip = _("Rejected by {by}: {reason}.").format(by=reviewer, reason=reason)
+        tip = _("Rejected by {by}.").format(by=reviewer)
         if not present:
             tip += " " + _("You took it out of the segmentation.")
-        elif label.get("reason") == "absent":
-            tip += " " + _("Delete its segment, unless you disagree.")
         else:
-            tip += " " + _("Correct it in the Segment Editor.")
-        return _("rejected: {reason}").format(reason=reason) + who, tip, "rejected"
+            tip += " " + _("Correct it in the Segment Editor, or delete its segment if the bone should not be there.")
+        return _("rejected") + who, tip, "rejected"
     if state == "accepted":
         tip = _("Accepted by {by}.").format(by=reviewer)
         if editor:
@@ -1499,7 +1478,7 @@ def _eventWho(event):
     return "{by} ({role})".format(by=event.get("by", "?"), role=event.get("role", "?"))
 
 
-def _eventText(event, labels):
+def _eventText(event):
     """What one step of a subject's quality check did, in words."""
     details = event.get("details") or {}
     action = event.get("action")
@@ -1507,13 +1486,8 @@ def _eventText(event, labels):
         parts = []
         if details.get("accepted"):
             parts.append(_("accepted {names}").format(names=", ".join(details["accepted"])))
-        rejected = [
-            "{name} ({reason})".format(name=name, reason=labels.reason_text(reason))
-            for name, reason in (details.get("rejected") or {}).items()
-            if reason != "missing"
-        ]
-        if rejected:
-            parts.append(_("rejected {names}").format(names=", ".join(rejected)))
+        if details.get("rejected"):
+            parts.append(_("rejected {names}").format(names=", ".join(details["rejected"])))
         if details.get("missing"):
             parts.append(_("reported missing {names}").format(names=", ".join(details["missing"])))
         return "; ".join(parts) or _("reviewed it")
@@ -1553,17 +1527,15 @@ def _stagedNote(handout, user):
                           "segmentation until the administrator approves the subject.")
 
 
-def _caseHtml(handout, labels, user):
+def _caseHtml(handout, user):
     """Why the subject came to the editor, where the segmentation they were sent comes from,
     and the subject's quality check so far with its comments, as HTML for the Subject section."""
     caseLabels = _caseLabels(handout)
     why = []
     for name in _rejectedLabels(handout):
         label = caseLabels[name]
-        why.append(("rejected", _("{name}, rejected by {by}: {reason}.").format(
-            name="<b>{}</b>".format(_escape(name)),
-            by=_escape(label.get("by") or _("a reviewer")),
-            reason=_escape(labels.reason_text(label.get("reason"))),
+        why.append(("rejected", _("{name}, rejected by {by}.").format(
+            name="<b>{}</b>".format(_escape(name)), by=_escape(label.get("by") or _("a reviewer"))
         )))
     for name in _missingLabels(handout):
         why.append(("missing", _("{name}, reported missing by {by}.").format(
@@ -1587,7 +1559,7 @@ def _caseHtml(handout, labels, user):
         steps = []
         for event in history:
             step = _escape("{when}, {who}: {what}".format(
-                when=_when(event.get("at")), who=_eventWho(event), what=_eventText(event, labels)
+                when=_when(event.get("at")), who=_eventWho(event), what=_eventText(event)
             ))
             if event.get("comment"):
                 step += '<br><i>"{}"</i>'.format(_escape(event["comment"]))
@@ -1688,7 +1660,6 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             "1": "available, not reviewed or corrected",
             "2": "available, reviewed and corrected (if necessary)",
         },
-        "reject_reasons": {"quality": "needs correction", "absent": "should not be there", "missing": "is missing"},
         "segmentation_suffix": ".seg.nrrd",
     }
 
@@ -1734,7 +1705,6 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
                 "schema_version": "0.3.0",
                 "label_name_to_value": {"FEMUR_LEFT": 710000001, "SKULL": 100000000, "BACKGROUND": 0},
                 "label_status_values": {"1": "not reviewed yet", "2": "reviewed"},
-                "reject_reasons": {"quality": "needs correcting"},
             }
         )
         self.assertEqual(labelMap.value_of("FEMUR_LEFT"), 710000001)
@@ -1748,10 +1718,6 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self.assertIn("not reviewed", status_text(1, short=False))
         self.assertEqual(labelMap.describe(1), "not reviewed yet")
         self.assertEqual(labelMap.describe(0), LABEL_STATUS_VALUES[0])
-        # The server words the reasons to reject a label; a reason it leaves out keeps the usual words.
-        self.assertEqual(labelMap.reason_text("quality"), "needs correcting")
-        self.assertEqual(labelMap.reason_text("absent"), REJECT_REASONS["absent"])
-        self.assertEqual(labelMap.reason_text("unheard_of"), "unheard_of")
         # A server of another schema would hand out masks this extension cannot read.
         self.assertTrue(schema_is_supported("0.3.0"))
         self.assertFalse(schema_is_supported("0.2.0"))
@@ -1764,7 +1730,6 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             session = self._connect(data_access=access)
             self.assertTrue(session.connected, f"an account sent '{access}' can edit")
             self.assertEqual(session.labels.value_of("FEMUR_LEFT"), 710000001)
-            self.assertEqual(session.labels.reason_text("absent"), "should not be there")
 
     def test_OnlyAServerOfVersion04IsAccepted(self):
         """The panel promises that a correction waits on the server until the administrator
@@ -1786,24 +1751,23 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         """What the handout says of each label, of the requests and of the history, as the
         editor reads it in the panel."""
         self.delayDisplay("The quality check in words")
-        labels = LabelMap.from_payload(self.LABELS_PAYLOAD)
-
         def describe(present=True, **label):
-            return _labelState(label, labels, present)
+            return _labelState(label, present)
 
-        # A label a reviewer sent back stands out, with the reason and the reviewer.
+        # A label a reviewer sent back stands out, with the reviewer. Correcting it or taking it
+        # out is the editor's call.
         self.assertEqual(
-            describe(state="rejected", painted=True, reason="quality", by="rita"),
-            ("rejected: needs correction (rita)", "Rejected by rita: needs correction. Correct it in the Segment Editor.",
-             "rejected"),
+            describe(state="rejected", painted=True, by="rita"),
+            ("rejected (rita)", "Rejected by rita. Correct it in the Segment Editor, or delete its segment if the bone "
+             "should not be there.", "rejected"),
         )
-        text, tip, flag = describe(state="rejected", painted=True, reason="absent", by="rita")
-        self.assertEqual((text, flag), ("rejected: should not be there (rita)", "rejected"))
-        self.assertIn("Delete its segment", tip)
-        text, tip, flag = describe(present=False, state="rejected", painted=False, reason="missing", by="rita")
+        text, tip, flag = describe(present=False, state="rejected", painted=True, by="rita")
+        self.assertEqual((text, flag), ("rejected (rita)", "rejected"))
+        self.assertIn("You took it out", tip)
+        text, tip, flag = describe(present=False, state="rejected", painted=False, by="rita")
         self.assertEqual((text, flag), ("missing (rita)", "missing"))
         self.assertIn("Add segment", tip)
-        self.assertIn("You have added it", describe(state="rejected", painted=False, reason="missing", by="rita")[1])
+        self.assertIn("You have added it", describe(state="rejected", painted=False, by="rita")[1])
         # The others do not.
         for label, present, wanted in (
             ({"state": "accepted", "painted": True, "by": "rita"}, True, "accepted (rita)"),
@@ -1814,26 +1778,23 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             ({"state": "removed", "painted": False}, False, "removed"),
             ({"state": "removed", "painted": False, "by": "rita"}, False, "removed (rita)"),
         ):
-            text, _tip, flag = _labelState(label, labels, present)
+            text, _tip, flag = _labelState(label, present)
             self.assertEqual((text, flag), (wanted, None), label)
-        self.assertEqual(_labelState(None, labels, True)[0], "added", "a label the editor added")
+        self.assertEqual(_labelState(None, True)[0], "added", "a label the editor added")
 
         # The history, step by step.
         review = {
             "action": "review", "by": "rita", "role": "reviewer",
-            "details": {"accepted": ["SKULL"], "rejected": {"FEMUR_LEFT": "quality", "FEMUR_RIGHT": "missing"},
-                        "missing": ["FEMUR_RIGHT"]},
+            "details": {"accepted": ["SKULL"], "rejected": ["FEMUR_LEFT"], "missing": ["FEMUR_RIGHT"]},
         }
-        self.assertEqual(
-            _eventText(review, labels), "accepted SKULL; rejected FEMUR_LEFT (needs correction); reported missing FEMUR_RIGHT"
-        )
+        self.assertEqual(_eventText(review), "accepted SKULL; rejected FEMUR_LEFT; reported missing FEMUR_RIGHT")
         self.assertEqual(_eventWho(review), "rita (reviewer)")
         edit = {"action": "edit", "by": "eddie", "role": "editor", "details": {"edited": ["FEMUR_LEFT"], "removed": ["SKULL"]}}
-        self.assertEqual(_eventText(edit, labels), "corrected FEMUR_LEFT; removed SKULL")
-        self.assertEqual(_eventText({"action": "edit", "details": {}}, labels), "uploaded the segmentation unchanged")
+        self.assertEqual(_eventText(edit), "corrected FEMUR_LEFT; removed SKULL")
+        self.assertEqual(_eventText({"action": "edit", "details": {}}), "uploaded the segmentation unchanged")
         back = {"action": "return", "by": "admin", "role": "admin", "details": {"to": "edit"}}
-        self.assertEqual((_eventWho(back), _eventText(back, labels)), ("the administrator", "sent it back to the editors"))
-        self.assertEqual(_eventText({"action": "escalate"}, labels), "sent it to the administrator")
+        self.assertEqual((_eventWho(back), _eventText(back)), ("the administrator", "sent it back to the editors"))
+        self.assertEqual(_eventText({"action": "escalate"}), "sent it to the administrator")
 
         # Requests about no single label.
         self.assertEqual(

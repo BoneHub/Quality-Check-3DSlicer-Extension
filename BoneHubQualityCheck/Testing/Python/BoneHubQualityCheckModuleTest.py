@@ -43,16 +43,16 @@ EXPECTED_WIDGETS = [
 SKULL, FEMUR_LEFT, FEMUR_RIGHT, TIBIA_LEFT = 100000000, 710000001, 710000002, 730000001
 
 
-def label(name, value, state, painted=True, reason=None, by=None, edited_by=None, status=1):
+def label(name, value, state, painted=True, by=None, edited_by=None, status=1):
     """One label of a handout, as a quality-check server of version 0.4 sends it."""
     return {
         "name": name, "value": value, "dataset_status": status, "state": state, "painted": painted,
-        "reason": reason, "by": by, "edited_by": edited_by,
+        "by": by, "edited_by": edited_by,
     }
 
 
 #: A bone a reviewer, rita, reported missing from the two-label subject.
-TIBIA_MISSING = label("TIBIA_LEFT", TIBIA_LEFT, "rejected", painted=False, reason="missing", by="rita", status=None)
+TIBIA_MISSING = label("TIBIA_LEFT", TIBIA_LEFT, "rejected", painted=False, by="rita", status=None)
 
 
 def handout(**changes):
@@ -64,7 +64,7 @@ def handout(**changes):
         "data_access": "image_and_segmentation", "has_image": True, "has_segmentation": True,
         "segmentation_source": "dataset", "segmentation_labels": {"SKULL": 1, "FEMUR_LEFT": 1},
         "labels": [
-            label("SKULL", SKULL, "rejected", reason="quality", by="rita"),
+            label("SKULL", SKULL, "rejected", by="rita"),
             label("FEMUR_LEFT", FEMUR_LEFT, "accepted", by="rita"),
         ],
         "requests": [],
@@ -72,7 +72,7 @@ def handout(**changes):
             {
                 "at": "2026-09-24T14:03:05Z", "by": "rita", "role": "reviewer", "action": "review", "stage": "edit",
                 "comment": "The skull is cut off at the top.",
-                "details": {"accepted": ["FEMUR_LEFT"], "rejected": {"SKULL": "quality"}, "missing": []},
+                "details": {"accepted": ["FEMUR_LEFT"], "rejected": ["SKULL"], "missing": []},
             },
         ],
         "stored_segmentation_issue": None, "subject_info": {}, "dataset_info": {},
@@ -203,7 +203,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         self.assertEqual(widget.ui.addLabelComboBox.itemText(0), "SKULL")
 
     def test_TheEditorSeesWhyTheSubjectCameToThem(self):
-        """The labels rejected and why, the bones reported missing, the administrator's word, the
+        """The labels rejected, the bones reported missing, the administrator's word, the
         history with its comments, and whose correction the segmentation is."""
         self.delayDisplay("Why the subject came")
         widget = self.widget()
@@ -213,7 +213,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
             widget,
             segmentation_source="staged",
             labels=[
-                label("SKULL", SKULL, "rejected", reason="quality", by="rita", edited_by="eddie"),
+                label("SKULL", SKULL, "rejected", by="rita", edited_by="eddie"),
                 label("FEMUR_LEFT", FEMUR_LEFT, "accepted", by="rita"),
                 TIBIA_MISSING,
             ],
@@ -226,8 +226,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
                 {
                     "at": "2026-09-24T16:00:00Z", "by": "rita", "role": "reviewer", "action": "review", "stage": "edit",
                     "comment": None,
-                    "details": {"accepted": [], "rejected": {"SKULL": "quality", "TIBIA_LEFT": "missing"},
-                                "missing": ["TIBIA_LEFT"]},
+                    "details": {"accepted": [], "rejected": ["SKULL"], "missing": ["TIBIA_LEFT"]},
                 },
                 {
                     "at": "2026-09-24T17:00:00Z", "by": "admin", "role": "admin", "action": "return", "stage": "edit",
@@ -238,14 +237,14 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
 
         why = widget.ui.caseTextBrowser.toPlainText()
         for words in (
-            "SKULL, rejected by rita: needs correction.",
+            "SKULL, rejected by rita.",
             "TIBIA_LEFT, reported missing by rita.",
             'The administrator sent it back to the editors: "Check the knee too."',
-            "rita (reviewer): accepted FEMUR_LEFT; rejected SKULL (needs correction)",
+            "rita (reviewer): accepted FEMUR_LEFT; rejected SKULL",
             '"The skull is cut off at the top."',
             "eddie (editor): corrected SKULL",
             '"Redrew the top of the skull."',
-            "rita (reviewer): rejected SKULL (needs correction); reported missing TIBIA_LEFT",
+            "rita (reviewer): rejected SKULL; reported missing TIBIA_LEFT",
             "the administrator: sent it back to the editors",
             "The segmentation is eddie's correction",
         ):
@@ -255,7 +254,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         # The labels table says the same, and the labels sent back stand out.
         self.assertEqual(
             self.column(widget, 1),
-            {"SKULL": "rejected: needs correction (rita)", "FEMUR_LEFT": "accepted (rita)", "TIBIA_LEFT": "missing (rita)"},
+            {"SKULL": "rejected (rita)", "FEMUR_LEFT": "accepted (rita)", "TIBIA_LEFT": "missing (rita)"},
         )
         table = widget.ui.labelsTableWidget
         tinted = {name for name, row in self.rows(widget).items() if table.item(row, 1).background().style() != qt.Qt.NoBrush}
@@ -559,14 +558,14 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         self.delayDisplay("Confirming")
         widget = self.widget()
 
-        # Corrections go back to a reviewer. The editor takes the femur out, which nobody asked
-        # for, and leaves out the tibia reported missing.
+        # Corrections go back to a reviewer. The editor takes the femur out, which a reviewer must
+        # agree to, and leaves out the tibia reported missing.
         logic = self.subjectInScene(widget, labels=handout()["labels"] + [TIBIA_MISSING])
         segmentation = logic.segmentationNode.GetSegmentation()
         segmentation.RemoveSegment(segmentation.GetSegmentIdBySegmentName("FEMUR_LEFT"))
         answer = {
             "assignment_id": "a1", "subject_key": "001_000001", "quality_check_confirmed": True, "state": "submitted",
-            "stage": "review", "segmentation_staged": True, "accepted_labels": [], "rejected_labels": {},
+            "stage": "review", "segmentation_staged": True, "accepted_labels": [], "rejected_labels": [],
             "missing_labels": [], "edited_labels": ["SKULL"], "removed_labels": ["FEMUR_LEFT"],
             "pending_labels": ["FEMUR_LEFT", "SKULL", "TIBIA_LEFT"],
             "message": "Uploaded. 3 label(s) go to a reviewer. The correction waits on the server; nothing is "
@@ -583,7 +582,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
             "Upload your correction of 001_000001?",
             "nothing reaches the dataset before the administrator approves the subject",
             "and those a reviewer rejected, go back to a reviewer",
-            "Taken out, although nobody asked: FEMUR_LEFT. A reviewer must agree",
+            "Taken out: FEMUR_LEFT. A reviewer must agree",
             "Reported missing, and not in your upload: TIBIA_LEFT.",
         ):
             self.assertIn(words, question)

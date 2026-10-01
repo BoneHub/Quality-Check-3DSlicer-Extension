@@ -6,9 +6,10 @@ a client–server setup for quality check of segmentations in the
 [BoneHub Dataset](https://github.com/BoneHub/BoneHub-Dataset).
 
 The server runs the quality check in stages. Reviewers judge each subject first, label by
-label, on the server's review page in the browser. A subject with a label they rejected —
-it needs correction, or should not be there — or a bone they reported missing goes to the
-editors, and so does a subject that has no segmentation yet. This extension is the editors'
+label, on the server's review page in the browser. A subject with a label they rejected or
+a bone they reported missing goes to the editors, and so does a subject that has no
+segmentation yet. Whether a rejected label needs correcting or should be taken out is the
+editor's call. This extension is the editors'
 client: it leases such a subject, loads its segmentation into 3D Slicer with every segment
 named and coloured as its BoneHub label, together with its image when the server sends one,
 shows why the subject came, and uploads the correction. A subject sent with its image but
@@ -106,8 +107,8 @@ Editor does the same automatically.
 
 The box in the *Subject* section lists why the server handed you the subject:
 
-- each label a reviewer rejected, with the reason — it needs correction, or should not be
-  there — and who rejected it;
+- each label a reviewer rejected, and who rejected it: correct it, or delete its segment if
+  the bone should not be there;
 - each bone a reviewer reported missing;
 - the administrator's word, when they sent the subject back to the editors, and a reviewer's
   rejection of the subject as a whole;
@@ -123,8 +124,7 @@ The labels table says the same label by label, in its *Quality check* column:
 
 | Quality check | Meaning |
 | --- | --- |
-| rejected: needs correction (rita) | rita rejected the label: correct it |
-| rejected: should not be there (rita) | rita rejected the label: delete its segment, unless you disagree |
+| rejected (rita) | rita rejected the label: correct it, or delete its segment if the bone should not be there |
 | missing (rita) | rita reported the bone missing: add it |
 | accepted (rita) | rita accepted the label; it keeps that verdict unless you change it |
 | to review | waits for a reviewer: nobody has reviewed it yet, or an editor corrected it |
@@ -148,15 +148,13 @@ status line reports when you connect:
 | --- | --- | --- |
 | Changed or added by you, or rejected by a reviewer | goes back to a reviewer | accepted if you tick it, else goes back to a reviewer |
 | Left as it was | keeps its verdict | keeps its verdict, ticked or not |
-| Taken out, as a reviewer asked (*should not be there*) | removed | removed |
-| Taken out, although nobody asked | removed once a reviewer agrees | removed |
+| Taken out | removed once a reviewer agrees | removed |
 | Reported missing, and not added | goes back to a reviewer, who sees you left it out | stays out |
 
 The labels table has tick boxes only when the server takes an editor's word. Otherwise there
 is nothing to tick, and the upload vouches for no label. Before uploading, the extension asks
 you to confirm, and lists what can be told without the server's comparison: the labels you
-took out, the missing bones still not there, the bones a reviewer said should not be there
-that still are, and any segment left empty. After the upload, the status line gives the
+took out, the missing bones still not there, and any segment left empty. After the upload, the status line gives the
 server's word on where the subject went, with the labels it counts as changed, accepted,
 taken out and waiting for a reviewer.
 
@@ -234,7 +232,7 @@ BoneHubQualityCheck/
 ├── BoneHubQualityCheck.py          the module: panel, scene logic and the self-test
 ├── BoneHubQualityCheckLib/
 │   ├── client.py                   REST client, vendored from the server repository
-│   ├── labels.py                   the BoneHub label map, label statuses, reasons to reject a label, each label's colour, and the distinct colours for viewing
+│   ├── labels.py                   the BoneHub label map, label statuses, each label's colour, and the distinct colours for viewing
 │   ├── segmentation.py             writing the corrected segmentation as a BoneHub .seg.nrrd
 │   └── session.py                  connection, lease, downloads, verdict
 └── Resources/
@@ -253,7 +251,7 @@ There are two suites, both registered as ctest targets when the extension is bui
 
 | Suite | What it covers |
 | --- | --- |
-| `BoneHubQualityCheck.py` | The label colours, and the label map with its statuses and reasons to reject a label; that an account can connect whatever it is sent of each subject, and that only a server of version 0.4 is accepted; how the quality check of a subject is put into words — each label's state, the history, the requests, whose correction the segmentation is, and the server's word on an upload; and the round trip of a BoneHub `.seg.nrrd` through the scene: that labels, voxels and the voxel grid come back unchanged (on an oblique image), that renaming a segment relabels it, that a missing bone can be added, that a segmentation edited without its image is written back on the image's grid, that a subject sent without its segmentation is painted from scratch and written back on the image's grid, that the segmentation sent gets a 3D model per label which changes no voxel of the upload, and one painted from scratch none, that the bones can be given distinct colours, neighbours far apart and a bone added in the next colour, which the Segment Editor lists and the views draw alike, while the upload is written in BoneHub colours and unticking gives each segment its BoneHub colour back, that a subject sent neither file is not loaded, that every subject starts from an empty scene, and that a segment which is not a BoneHub label is refused |
+| `BoneHubQualityCheck.py` | The label colours, and the label map with its statuses; that an account can connect whatever it is sent of each subject, and that only a server of version 0.4 is accepted; how the quality check of a subject is put into words — each label's state, the history, the requests, whose correction the segmentation is, and the server's word on an upload; and the round trip of a BoneHub `.seg.nrrd` through the scene: that labels, voxels and the voxel grid come back unchanged (on an oblique image), that renaming a segment relabels it, that a missing bone can be added, that a segmentation edited without its image is written back on the image's grid, that a subject sent without its segmentation is painted from scratch and written back on the image's grid, that the segmentation sent gets a 3D model per label which changes no voxel of the upload, and one painted from scratch none, that the bones can be given distinct colours, neighbours far apart and a bone added in the next colour, which the Segment Editor lists and the views draw alike, while the upload is written in BoneHub colours and unticking gives each segment its BoneHub colour back, that a subject sent neither file is not loaded, that every subject starts from an empty scene, and that a segment which is not a BoneHub label is refused |
 | `Testing/Python/BoneHubQualityCheckModuleTest.py` | The panel: that the `.ui` file still carries every widget the code uses, that the sections stay locked until there is something to do, that the key stays masked, that the editor sees why a subject came to them — the labels rejected and missing, which stand out, the administrator's requests, the history with its comments, and an earlier editor's correction — that a missing bone is picked for *Add segment*, that a subject without a segmentation opens for painting from scratch (with a warning for an account sent images only when the server has a segmentation it was not sent), that a subject sent neither file can only be rejected, that the Segment Editor can edit a subject without its image, that *Show the segmentation in 3D* builds and takes away the models of the segmentation sent, and is locked for one painted from scratch, that *Give each bone a distinct colour* recolours the bones and back, in the Segment Editor's list, the views and the labels table alike, and colours a subject loaded while it is on and a bone added, that tick boxes appear only when the server takes an editor's word and behave across a refresh, what confirming asks, sends and reports under either setting, that rejecting sends the subject to the administrator, and that an empty queue speaks of correcting |
 
 The first also runs from **Reload and Test** in the module's *Advanced* section. Running
