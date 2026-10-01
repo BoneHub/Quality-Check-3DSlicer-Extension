@@ -58,6 +58,7 @@ from BoneHubQualityCheckLib.labels import (
     LABEL_STATUS_VALUES,
     REJECT_REASONS,
     LabelMap,
+    distinct_color,
     label_color,
     schema_is_supported,
     status_text,
@@ -123,6 +124,12 @@ comment, and nothing in the dataset changes.
 label, and shows them in the 3D view. The tick is remembered for the subjects that follow. The
 models follow your corrections, which slows the Segment Editor on a large segmentation: untick it
 to take them away.
+<p><i>Give each bone a distinct colour</i> gives every segment a colour of its own, so that
+neighbouring bones stand apart where BoneHub colours the bones of a body region in near shades. The
+Segment Editor's list, the views and the labels table show the same colours, so a bone seen in a
+view is found in the list by its colour. Your upload is still written in the BoneHub colours, and
+unticking gives the segments their BoneHub colours back. The tick is remembered for the subjects
+that follow.
 <p>Each subject is loaded into an empty scene. The scene is closed when you leave a subject,
 so anything else you loaded into it goes as well.
 """)
@@ -201,13 +208,14 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.extendLeaseButton.clicked.connect(self.onExtendLease)
         self.ui.releaseSubjectButton.clicked.connect(self.onReleaseSubject)
 
-        self.ui.refreshLabelsButton.clicked.connect(self.updateLabelsTable)
+        self.ui.refreshLabelsButton.clicked.connect(self.refreshFromScene)
         self.ui.labelsTableWidget.cellClicked.connect(self.onLabelCellClicked)
         self.ui.selectAllLabelsButton.clicked.connect(lambda: self.setAllLabelsChecked(True))
         self.ui.selectNoLabelsButton.clicked.connect(lambda: self.setAllLabelsChecked(False))
         self.ui.addSegmentButton.clicked.connect(self.onAddSegment)
         self.ui.segmentEditorButton.clicked.connect(self.onOpenSegmentEditor)
         self.ui.show3DCheckBox.toggled.connect(self.onShow3DToggled)
+        self.ui.distinctColoursCheckBox.toggled.connect(self.onDistinctColoursToggled)
 
         self.ui.confirmButton.clicked.connect(self.onConfirm)
         self.ui.rejectButton.clicked.connect(self.onReject)
@@ -222,7 +230,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.removeObservers()
 
     def enter(self):
-        self.updateLabelsTable()
+        self.refreshFromScene()
 
     # --------------------------------------------------------------- settings
     def loadSettings(self):
@@ -238,6 +246,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.keepFilesCheckBox.checked = _toBool(settings.value(SETTINGS_PREFIX + "keepFiles", False))
         self.ui.autoNextCheckBox.checked = _toBool(settings.value(SETTINGS_PREFIX + "autoNext", False))
         self.ui.show3DCheckBox.checked = _toBool(settings.value(SETTINGS_PREFIX + "show3D", False))
+        self.ui.distinctColoursCheckBox.checked = _toBool(settings.value(SETTINGS_PREFIX + "distinctColours", False))
 
     def saveSettings(self):
         settings = qt.QSettings()
@@ -249,6 +258,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         settings.setValue(SETTINGS_PREFIX + "keepFiles", self.ui.keepFilesCheckBox.checked)
         settings.setValue(SETTINGS_PREFIX + "autoNext", self.ui.autoNextCheckBox.checked)
         settings.setValue(SETTINGS_PREFIX + "show3D", self.ui.show3DCheckBox.checked)
+        settings.setValue(SETTINGS_PREFIX + "distinctColours", self.ui.distinctColoursCheckBox.checked)
 
     def applySettingsToSession(self):
         session = self.logic.session
@@ -403,7 +413,13 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
-            self.logic.loadSubject(handout, segmentationPath, imagePath, show3D=self.ui.show3DCheckBox.checked)
+            self.logic.loadSubject(
+                handout,
+                segmentationPath,
+                imagePath,
+                show3D=self.ui.show3DCheckBox.checked,
+                distinctColours=self.ui.distinctColoursCheckBox.checked,
+            )
         except Exception as error:
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not load the subject"))
         finally:
@@ -491,6 +507,16 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         for name in self.logic.session.labels.sorted_names():
             self.ui.addLabelComboBox.addItem(name)
 
+    def refreshFromScene(self):
+        """Read the segments in the scene again, after an edit here or in the Segment Editor.
+
+        Besides the labels table, a segment added meanwhile is given a colour of its own when
+        the bones are drawn in distinct colours.
+        """
+        if self.ui.distinctColoursCheckBox.checked:
+            self.logic.showDistinctColours(True)
+        self.updateLabelsTable()
+
     def updateLabelsTable(self):
         """Show every label of this subject: what the quality check has made of it, what the
         dataset says, and what is in the scene.
@@ -510,6 +536,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         previouslyListed = self._checkableLabels() if table.rowCount else set()
 
         inSegmentation = self.logic.segmentLabelValues()
+        colours = self.logic.segmentColours()
         inDataset = dict(session.handout.get("segmentation_labels") or {})
         inCase = _caseLabels(session.handout)
         darkTheme = table.palette.color(qt.QPalette.Base).lightness() < 128
@@ -535,8 +562,10 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             else:
                 item.setFlags(qt.Qt.ItemIsEnabled)
             item.setToolTip(_labelTip(name, value, present, ticks))
-            if value is not None:
-                item.setForeground(qt.QBrush(_labelTextColour(value, darkTheme)))
+            # A segment's name is written in the colour it is drawn in, distinct or BoneHub.
+            colour = colours.get(name) or (label_color(value) if value is not None else None)
+            if colour is not None:
+                item.setForeground(qt.QBrush(_labelTextColour(colour, darkTheme)))
             table.setItem(row, 0, item)
 
             text, tip, flag = _labelState(inCase.get(name), session.labels, present)
@@ -649,7 +678,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         except Exception as error:
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not add the segment"))
             return
-        self.updateLabelsTable()
+        self.refreshFromScene()
         self.pickNextMissingLabel()
 
     def onOpenSegmentEditor(self):
@@ -675,6 +704,13 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not show the segmentation in 3D"))
         finally:
             slicer.app.restoreOverrideCursor()
+
+    def onDistinctColoursToggled(self, shown):
+        """Give each bone a colour of its own, or its BoneHub colour again, in the views, the
+        Segment Editor and the labels table alike. The tick is remembered, and a subject loaded
+        later comes coloured one way or the other."""
+        self.logic.showDistinctColours(shown)
+        self.updateLabelsTable()
 
     # ---------------------------------------------------------------- verdict
     def onConfirm(self):
@@ -887,6 +923,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # A segmentation made here to paint from scratch has no models to show, and the Segment
         # Editor's Show 3D button is there for it once there is something painted.
         self.ui.show3DCheckBox.enabled = holding and self.segmentationSent()
+        self.ui.distinctColoursCheckBox.enabled = loaded
         self.ui.nextSubjectButton.enabled = connected
         self.ui.reloadSubjectButton.enabled = connected
         self.ui.extendLeaseButton.enabled = holding
@@ -952,6 +989,10 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         #: or without it a blank volume on the segmentation's own grid.
         self.referenceVolumeNode = None
         self.segmentationNode = None
+        #: The colour each segment given a distinct one had before, by segment id, and the
+        #: index of the distinct colour the next segment is given: see showDistinctColours.
+        self.coloursBeforeDistinct = {}
+        self.nextDistinctColour = 0
 
     # ------------------------------------------------------------------ scene
     def clearScene(self):
@@ -965,8 +1006,10 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         self.imageVolumeNode = None
         self.referenceVolumeNode = None
         self.segmentationNode = None
+        self.coloursBeforeDistinct = {}
+        self.nextDistinctColour = 0
 
-    def loadSubject(self, handout, segmentationPath=None, imagePath=None, show3D=False):
+    def loadSubject(self, handout, segmentationPath=None, imagePath=None, show3D=False, distinctColours=False):
         """Load what was sent of one subject: its BoneHub segmentation, one segment per label,
         its image, or both.
 
@@ -974,7 +1017,8 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         editor to add labels to and paint. Without the image, the segmentation is shown,
         edited and written back on its own voxel grid, over a blank volume standing in for
         the image. With ``show3D``, the segmentation sent is shown as 3D models as well; an
-        empty one made here has none to show.
+        empty one made here has none to show. With ``distinctColours``, each segment is drawn
+        in a colour of its own rather than its BoneHub one.
         """
         self.clearScene()
         subjectKey = handout.get("subject_key", "subject")
@@ -1002,6 +1046,8 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         if displayNode is not None:
             displayNode.SetVisibility2DFill(True)
             displayNode.SetVisibility2DOutline(True)
+        if distinctColours:
+            self.showDistinctColours(True)
 
         slicer.util.setSliceViewerLayers(background=self.referenceVolumeNode, fit=True)
         self.centerViewsOnSegmentation()
@@ -1043,6 +1089,69 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         return self.segmentationNode.GetSegmentation().ContainsRepresentation(
             slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName()
         )
+
+    def showDistinctColours(self, shown):
+        """Give each segment a colour of its own, or its BoneHub colour again.
+
+        BoneHub colours a label by its body region, so the bones of one region -- the two
+        femurs, a run of vertebrae -- come out in near shades of one hue, and a bone seen in
+        the views is hard to find in the Segment Editor's list. The distinct colour is the
+        segment's own colour, so the list, the slice views and the 3D view all show it. It
+        never reaches the server: the upload takes each label's colour from its value, not
+        from the segment, so it carries the BoneHub colours whatever the scene shows.
+
+        The segments are coloured in label order, which is anatomical, so that neighbouring
+        bones differ most. A segment that has no distinct colour yet -- one added since -- is
+        given the next one, and the others keep theirs. Taken back, a BoneHub label's segment
+        gets its label's colour, that of the name it has now, and any other segment the
+        colour it had.
+        """
+        if self.segmentationNode is None:
+            return
+        segmentation = self.segmentationNode.GetSegmentation()
+        segmentIds = _segmentIds(segmentation)
+        # A segment deleted since is forgotten, so that one added later under its id is coloured.
+        self.coloursBeforeDistinct = {
+            segmentId: colour for segmentId, colour in self.coloursBeforeDistinct.items() if segmentId in segmentIds
+        }
+
+        if not shown:
+            for segmentId, colour in self.coloursBeforeDistinct.items():
+                segment = segmentation.GetSegment(segmentId)
+                value = self.session.labels.value_of(segment.GetName())
+                segment.SetColor(*(label_color(value) if value is not None else colour))
+            self.coloursBeforeDistinct = {}
+            self.nextDistinctColour = 0
+            return
+
+        def labelOrder(segmentId):
+            value = self.session.labels.value_of(segmentation.GetSegment(segmentId).GetName())
+            return (value is None, value or 0, segmentId)
+
+        for segmentId in sorted(segmentIds, key=labelOrder):
+            if segmentId in self.coloursBeforeDistinct:
+                continue
+            segment = segmentation.GetSegment(segmentId)
+            self.coloursBeforeDistinct[segmentId] = tuple(segment.GetColor())
+            segment.SetColor(*distinct_color(self.nextDistinctColour))
+            self.nextDistinctColour += 1
+
+    def distinctColoursShown(self):
+        """Whether every segment in hand has a colour of its own; False when there is none."""
+        if self.segmentationNode is None:
+            return False
+        segmentIds = _segmentIds(self.segmentationNode.GetSegmentation())
+        return bool(segmentIds) and all(segmentId in self.coloursBeforeDistinct for segmentId in segmentIds)
+
+    def segmentColours(self):
+        """``{segment name: (red, green, blue)}``: the colour each segment is drawn and listed in."""
+        if self.segmentationNode is None:
+            return {}
+        segmentation = self.segmentationNode.GetSegmentation()
+        return {
+            segmentation.GetSegment(segmentId).GetName(): tuple(segmentation.GetSegment(segmentId).GetColor())
+            for segmentId in _segmentIds(segmentation)
+        }
 
     def createBlankVolume(self, segmentationPath, name):
         """A blank volume on the voxel grid of a segmentation file, standing in for its image.
@@ -1247,9 +1356,10 @@ def _readOnlyItem(text):
 _FLAG_COLOURS = {"rejected": (178, 34, 34), "missing": (180, 83, 9)}
 
 
-def _labelTextColour(value, darkTheme):
-    """A label's colour, made readable as text: darkened on a light theme, lightened on a dark one."""
-    red, green, blue = label_color(value)
+def _labelTextColour(colour, darkTheme):
+    """A segment's ``(red, green, blue)`` colour, made readable as text: darkened on a light
+    theme, lightened on a dark one."""
+    red, green, blue = colour
     if darkTheme:
         return qt.QColor.fromRgbF(0.45 + red * 0.55, 0.45 + green * 0.55, 0.45 + blue * 0.55)
     return qt.QColor.fromRgbF(red * 0.6, green * 0.6, blue * 0.6)
@@ -1599,6 +1709,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self.test_ASegmentationIsEditedWithoutItsImage()
         self.test_ASubjectIsSegmentedFromScratchOnItsImage()
         self.test_TheSegmentationSentCanBeShownIn3D()
+        self.test_EachBoneCanBeDrawnInAColourOfItsOwn()
         self.test_ASubjectNeedsItsImageOrItsSegmentation()
         self.test_ANewSubjectStartsFromAnEmptyScene()
         self.test_UnknownSegmentsAreRefused()
@@ -1896,6 +2007,76 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
 
         logic.loadSubject({"subject_key": "001_000002"}, None, self.imagePath, show3D=True)
         self.assertFalse(logic.segmentationShownIn3D(), "a segmentation to paint from scratch was not sent")
+
+    def test_EachBoneCanBeDrawnInAColourOfItsOwn(self):
+        """Neighbouring bones get colours far apart, which the Segment Editor lists and the views
+        draw alike; what is written back keeps the BoneHub colours, and unticking gives them back
+        to the segments."""
+        self.delayDisplay("Distinct colours")
+        for index in range(200):
+            colour, following = distinct_color(index), distinct_color(index + 1)
+            for channel in colour:
+                self.assertTrue(0.0 <= channel <= 1.0, f"{index} gave a channel outside 0..1")
+            self.assertGreater(max(abs(a - b) for a, b in zip(colour, following)), 0.25, f"{index} and the next")
+
+        logic, _volumeNode, expected = self._buildSubject()
+        self.assertFalse(logic.distinctColoursShown(), "only when asked")
+        logic.loadSubject({"subject_key": "001_000001"}, self.segmentationPath, self.imagePath, distinctColours=True)
+        self.assertTrue(logic.distinctColoursShown())
+
+        def assertColour(actual, wanted, message):
+            for a, b in zip(actual, wanted):
+                self.assertAlmostEqual(a, b, places=3, msg=message)
+
+        def colour(name):
+            """The segment's colour, which the Segment Editor lists, checked against the colour
+            the views draw. Looked up afresh: loading a subject replaces the segmentation."""
+            segmentation = logic.segmentationNode.GetSegmentation()
+            segmentId = segmentation.GetSegmentIdBySegmentName(name)
+            listed = tuple(segmentation.GetSegment(segmentId).GetColor())
+            drawn = tuple(logic.segmentationNode.GetDisplayNode().GetSegmentColor(segmentId))
+            assertColour(drawn, listed, f"{name} is drawn in the colour the Segment Editor lists")
+            return listed
+
+        assertColour(colour("SKULL"), distinct_color(0), "coloured in label order")
+        assertColour(colour("FEMUR_LEFT"), distinct_color(1), "coloured in label order")
+
+        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
+        image, values, _segments = self._readBoneHubFile(path)
+        self.assertTrue(np.array_equal(values, expected), "the colours change no voxel")
+        for i, (name, value) in enumerate((("SKULL", 100000000), ("FEMUR_LEFT", 710000001))):
+            self.assertEqual(image.GetMetaData(f"Segment{i}_Name"), name)
+            written = [float(channel) for channel in image.GetMetaData(f"Segment{i}_Color").split()]
+            assertColour(written, label_color(value), f"{name} is uploaded in its BoneHub colour")
+
+        # A bone added later takes the next colour, and the others keep theirs; so does a
+        # segment that is no BoneHub label.
+        logic.addEmptySegment("FEMUR_RIGHT")
+        logic.segmentationNode.GetSegmentation().AddEmptySegment("MY_SCRATCH_SEGMENT", "MY_SCRATCH_SEGMENT", [0.1, 0.2, 0.3])
+        logic.showDistinctColours(True)
+        assertColour(colour("FEMUR_RIGHT"), distinct_color(2), "the next colour")
+        assertColour(colour("MY_SCRATCH_SEGMENT"), distinct_color(3), "after the BoneHub labels")
+        assertColour(colour("SKULL"), distinct_color(0), "unchanged")
+
+        # Unticked, a BoneHub label's segment takes the colour of the label it is named after now,
+        # and any other segment the colour it had.
+        segmentation = logic.segmentationNode.GetSegmentation()
+        segmentation.GetSegment(segmentation.GetSegmentIdBySegmentName("SKULL")).SetName("NOT_A_BONE")
+        segmentation.GetSegment(segmentation.GetSegmentIdBySegmentName("MY_SCRATCH_SEGMENT")).SetName("SKULL")
+        logic.showDistinctColours(False)
+        self.assertFalse(logic.distinctColoursShown())
+        assertColour(colour("FEMUR_LEFT"), label_color(710000001), "its BoneHub colour again")
+        assertColour(colour("FEMUR_RIGHT"), label_color(710000002), "its BoneHub colour again")
+        assertColour(colour("SKULL"), label_color(100000000), "renamed to a label: that label's colour")
+        assertColour(colour("NOT_A_BONE"), label_color(100000000), "no label any more: the colour it had")
+
+        logic.loadSubject({"subject_key": "001_000002"}, None, self.imagePath, distinctColours=True)
+        self.assertFalse(logic.distinctColoursShown(), "nothing painted yet")
+        logic.addEmptySegment("FEMUR_LEFT")
+        logic.showDistinctColours(True)
+        self.assertTrue(logic.distinctColoursShown(), "a bone painted from scratch is coloured too")
+        assertColour(colour("FEMUR_LEFT"), distinct_color(0), "a new subject starts from the first colour")
 
     def test_ASubjectNeedsItsImageOrItsSegmentation(self):
         """A subject sent neither is not loaded, and the last subject goes all the same."""

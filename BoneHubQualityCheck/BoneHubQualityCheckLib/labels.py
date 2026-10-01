@@ -1,4 +1,5 @@
-"""The BoneHub label map as the client sees it, plus the colour each label is drawn in.
+"""The BoneHub label map as the client sees it, plus the colour each label is drawn in, and the
+colours that tell a subject's bones apart on screen.
 
 The label map itself is never hard-coded here: it is fetched from the server's
 ``/api/v1/labels`` endpoint, so a dataset that gains labels does not need a new release of
@@ -61,6 +62,27 @@ def label_color(value: int) -> tuple[float, float, float]:
     saturation = 0.45 + ((structure // 100) % 5) * 0.09
     lightness = min(0.42 + tissue * 0.09, 0.78)
     return colorsys.hls_to_rgb(hue, lightness, saturation)
+
+
+#: The golden ratio's fractional part. Hues stepped round the colour wheel by it each land far
+#: from the ones just before them, however many follow.
+_GOLDEN_STEP = 0.6180339887498949
+
+
+def distinct_color(index: int) -> tuple[float, float, float]:
+    """An RGB colour in 0..1 for the ``index``-th bone of a subject, far from the bones next to it.
+
+    For finding a bone on screen only: an upload is always written in :func:`label_color`'s
+    colours, whatever colour its segments have. :func:`label_color` takes its hue from the body
+    region, so the bones of one region -- the two femurs, a run of vertebrae -- come out in near
+    shades of one hue. Here the hue steps round the wheel by the golden ratio and the lightness
+    takes turns, so that bones one after the other in label order, which are anatomical
+    neighbours, stand apart.
+    """
+    index = int(index)
+    hue = (index * _GOLDEN_STEP) % 1.0
+    lightness = (0.52, 0.7, 0.38)[index % 3]
+    return colorsys.hls_to_rgb(hue, lightness, 0.85)
 
 
 def status_text(value, short: bool = True) -> str:

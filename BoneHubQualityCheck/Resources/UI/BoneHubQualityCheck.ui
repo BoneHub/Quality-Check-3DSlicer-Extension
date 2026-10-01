@@ -260,6 +260,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="distinctColoursCheckBox">
+        <property name="toolTip">
+         <string>Give each bone a colour of its own, so that neighbouring bones stand apart: BoneHub colours the bones of a body region in near shades of one hue. The Segment Editor's list, the slice views, the 3D view and the labels table all show the same colours, so a bone seen in a view is found in the list by its colour. Your upload is still written in the BoneHub colours; untick this to give the segments their BoneHub colours back. A segment you add takes the next colour when you press Add segment or Refresh, or come back to this module.</string>
+        </property>
+        <property name="text">
+         <string>Give each bone a distinct colour</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QTableWidget" name="labelsTableWidget">
         <property name="toolTip">
          <string>Every label of this subject: what the quality check has made of it so far, its status in Subject_info, and whether your segmentation paints it. A segment's name is its label: rename a segment to relabel it.</string>

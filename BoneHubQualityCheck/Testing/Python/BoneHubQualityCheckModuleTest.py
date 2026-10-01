@@ -8,7 +8,9 @@ rejected and why, the bones reported missing, the administrator's requests, the 
 its comments, and whose correction the segmentation is -- that a missing bone is ready to
 add, that a subject sent without its segmentation is painted from scratch and one sent
 without its image is corrected, while one sent neither can only be rejected, that the
-segmentation sent can be shown in 3D, that the tick boxes are there only when the server
+segmentation sent can be shown in 3D, that each bone can be given a colour of its own that
+the Segment Editor, the views and the labels table share, and its BoneHub colour back, that
+the tick boxes are there only when the server
 takes an editor's word and behave across a refresh, and
 what confirming, rejecting and an empty queue tell the editor, and send. They need a module
 widget, so they only run in a Slicer with a main window.
@@ -20,7 +22,7 @@ from slicer.ScriptedLoadableModule import ScriptedLoadableModuleTest
 
 import BoneHubQualityCheck
 from BoneHubQualityCheckLib import QCClientError
-from BoneHubQualityCheckLib.labels import LabelMap
+from BoneHubQualityCheckLib.labels import LabelMap, distinct_color, label_color
 
 #: Every widget the module code reaches for through ``self.ui``.
 EXPECTED_WIDGETS = [
@@ -31,7 +33,7 @@ EXPECTED_WIDGETS = [
     "subjectCollapsibleButton", "labelsTableWidget", "labelsSummaryLabel",
     "refreshLabelsButton", "selectAllLabelsButton", "selectNoLabelsButton",
     "addLabelComboBox", "addSegmentButton", "segmentEditorButton", "show3DCheckBox",
-    "reviewCollapsibleButton", "commentTextEdit", "confirmButton", "rejectButton",
+    "distinctColoursCheckBox", "reviewCollapsibleButton", "commentTextEdit", "confirmButton", "rejectButton",
     "autoNextCheckBox", "submitStatusLabel", "submitCollapsibleButton",
     "workspacePathLineEdit", "timeoutSpinBox", "keepFilesCheckBox", "openWorkspaceButton",
     "advancedCollapsibleButton",
@@ -100,6 +102,7 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         self.test_ASubjectSentNothingCanOnlyBeRejected()
         self.test_ASubjectWithoutAnImageCanBeCorrected()
         self.test_TheSegmentationSentCanBeShownIn3D()
+        self.test_EachBoneCanBeDrawnInAColourOfItsOwn()
         self.test_TicksAreThereOnlyWhenTheyCount()
         self.test_TicksSurviveARefresh()
         self.test_ConfirmingUploadsACorrectionThatWaitsOnTheServer()
@@ -428,6 +431,83 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
             widget.downloadAndLoad(fromScratch)
             self.assertFalse(logic.segmentationShownIn3D())
             self.assertFalse(checkBox.enabled, "nothing was sent to show")
+        finally:
+            checkBox.checked = wasChecked
+
+    def test_EachBoneCanBeDrawnInAColourOfItsOwn(self):
+        """The tick gives each bone a colour of its own, which the Segment Editor lists, the views
+        draw and the labels table writes the bone's name in, and gives the BoneHub colours back
+        when unticked. A subject loaded while it is on comes coloured, and a bone added takes the
+        next colour."""
+        self.delayDisplay("Distinct colours")
+        widget = self.widget()
+        checkBox = widget.ui.distinctColoursCheckBox
+        wasChecked = checkBox.checked
+
+        def colours(logic):
+            """``{segment name: colour}``, the colour the Segment Editor lists, after checking
+            that the views draw the segment in it and the labels table writes its name in it."""
+            listed = logic.segmentColours()
+            segmentation = logic.segmentationNode.GetSegmentation()
+            displayNode = logic.segmentationNode.GetDisplayNode()
+            table = widget.ui.labelsTableWidget
+            darkTheme = table.palette.color(qt.QPalette.Base).lightness() < 128
+            rows = self.rows(widget)
+            for name, colour in listed.items():
+                drawn = displayNode.GetSegmentColor(segmentation.GetSegmentIdBySegmentName(name))
+                assertColour(tuple(drawn), colour, f"{name} is drawn in the colour the Segment Editor lists")
+                written = table.item(rows[name], 0).foreground().color()
+                self.assertEqual(written.name(), BoneHubQualityCheck._labelTextColour(colour, darkTheme).name(), name)
+            return listed
+
+        def assertColour(actual, wanted, message):
+            for a, b in zip(actual, wanted):
+                self.assertAlmostEqual(a, b, places=3, msg=message)
+
+        def assertBoneHubColours(logic):
+            for name, colour in colours(logic).items():
+                assertColour(colour, label_color(logic.session.labels.value_of(name)), f"{name}: its BoneHub colour")
+
+        try:
+            checkBox.checked = False
+            logic = self.subjectInScene(widget)
+            self.assertTrue(checkBox.enabled)
+            assertBoneHubColours(logic)
+            checkBox.checked = True
+            self.assertTrue(logic.distinctColoursShown())
+            distinct = colours(logic)
+            assertColour(distinct["SKULL"], distinct_color(0), "in label order")
+            assertColour(distinct["FEMUR_LEFT"], distinct_color(1), "in label order")
+            checkBox.checked = False
+            self.assertFalse(logic.distinctColoursShown())
+            assertBoneHubColours(logic)
+
+            checkBox.checked = True
+            logic.session.download_segmentation = (
+                lambda: self.segmentationPath if logic.session.handout.get("has_segmentation") else None
+            )
+            logic.session.download_image = lambda: self.imagePath
+            sent = handout(labels=handout()["labels"] + [TIBIA_MISSING])
+            logic.session.handout = sent
+            widget.downloadAndLoad(sent)
+            self.assertTrue(logic.distinctColoursShown(), "loaded coloured")
+            before = colours(logic)
+            widget.onAddSegment()  # the tibia reported missing
+            after = colours(logic)
+            self.assertTrue(logic.distinctColoursShown(), "the bone added is coloured too")
+            self.assertEqual({name: after[name] for name in before}, before, "the others keep their colours")
+            assertColour(after["TIBIA_LEFT"], distinct_color(2), "the next colour")
+
+            fromScratch = handout(
+                assignment_id="a2", subject_key="001_000002", has_segmentation=False, segmentation_source=None,
+                segmentation_labels={}, labels=[], history=[],
+            )
+            logic.session.handout = fromScratch
+            widget.downloadAndLoad(fromScratch)
+            self.assertTrue(checkBox.enabled, "a segmentation painted from scratch can be coloured")
+            widget.pickLabelToAdd("FEMUR_LEFT")
+            widget.onAddSegment()
+            self.assertTrue(logic.distinctColoursShown())
         finally:
             checkBox.checked = wasChecked
 

@@ -83,6 +83,16 @@ Until the extension is in the Extensions Manager, install it from source:
    slows the Segment Editor on a large segmentation: untick it to take them away. A subject
    sent without a segmentation has none to show; once you have painted something, the Segment
    Editor's *Show 3D* button shows it.
+   *Give each bone a distinct colour* gives every segment a colour of its own. BoneHub colours
+   the bones of a body region in near shades of one hue, so the two femurs or a run of
+   vertebrae are hard to tell apart; here the segments are coloured in label order, which is
+   anatomical, so neighbouring bones differ most. The Segment Editor's list, the slice views,
+   the 3D view and the labels table all show the same colours, so a bone you spot in a view
+   is found in the list by its colour. The colours never reach the server: your upload is
+   written in the BoneHub colours, which are taken from each label's value, not from the
+   segments. Unticking gives the segments their BoneHub colours back. A bone you add takes the
+   next colour when you press *Add segment* or *Refresh*, or come back to the module from the
+   Segment Editor; the others keep theirs. The tick is remembered for the subjects that follow.
 4. **Submit** — *Confirm and submit* uploads your correction, once you have confirmed what it
    will do; see [below](#what-happens-to-your-correction). *Reject* is for a subject you
    cannot correct — the image is unusable, say: it goes to the administrator with your
@@ -215,6 +225,7 @@ message naming it, rather than being refused by the server after the wait.
 | Keep downloaded files after submitting | Leaves the files in the working folder instead of deleting them |
 | Get the next subject after submitting | Goes straight on to the next subject |
 | Show the segmentation in 3D | Loads each subject's segmentation with its 3D models, when the server sends one. Off at first |
+| Give each bone a distinct colour | Gives each subject's bones colours of their own on screen; uploads keep the BoneHub colours. Off at first |
 
 ## Layout
 
@@ -223,7 +234,7 @@ BoneHubQualityCheck/
 ├── BoneHubQualityCheck.py          the module: panel, scene logic and the self-test
 ├── BoneHubQualityCheckLib/
 │   ├── client.py                   REST client, vendored from the server repository
-│   ├── labels.py                   the BoneHub label map, label statuses, reasons to reject a label, and each label's colour
+│   ├── labels.py                   the BoneHub label map, label statuses, reasons to reject a label, each label's colour, and the distinct colours for viewing
 │   ├── segmentation.py             writing the corrected segmentation as a BoneHub .seg.nrrd
 │   └── session.py                  connection, lease, downloads, verdict
 └── Resources/
@@ -242,8 +253,8 @@ There are two suites, both registered as ctest targets when the extension is bui
 
 | Suite | What it covers |
 | --- | --- |
-| `BoneHubQualityCheck.py` | The label colours, and the label map with its statuses and reasons to reject a label; that an account can connect whatever it is sent of each subject, and that only a server of version 0.4 is accepted; how the quality check of a subject is put into words — each label's state, the history, the requests, whose correction the segmentation is, and the server's word on an upload; and the round trip of a BoneHub `.seg.nrrd` through the scene: that labels, voxels and the voxel grid come back unchanged (on an oblique image), that renaming a segment relabels it, that a missing bone can be added, that a segmentation edited without its image is written back on the image's grid, that a subject sent without its segmentation is painted from scratch and written back on the image's grid, that the segmentation sent gets a 3D model per label which changes no voxel of the upload, and one painted from scratch none, that a subject sent neither file is not loaded, that every subject starts from an empty scene, and that a segment which is not a BoneHub label is refused |
-| `Testing/Python/BoneHubQualityCheckModuleTest.py` | The panel: that the `.ui` file still carries every widget the code uses, that the sections stay locked until there is something to do, that the key stays masked, that the editor sees why a subject came to them — the labels rejected and missing, which stand out, the administrator's requests, the history with its comments, and an earlier editor's correction — that a missing bone is picked for *Add segment*, that a subject without a segmentation opens for painting from scratch (with a warning for an account sent images only when the server has a segmentation it was not sent), that a subject sent neither file can only be rejected, that the Segment Editor can edit a subject without its image, that *Show the segmentation in 3D* builds and takes away the models of the segmentation sent, and is locked for one painted from scratch, that tick boxes appear only when the server takes an editor's word and behave across a refresh, what confirming asks, sends and reports under either setting, that rejecting sends the subject to the administrator, and that an empty queue speaks of correcting |
+| `BoneHubQualityCheck.py` | The label colours, and the label map with its statuses and reasons to reject a label; that an account can connect whatever it is sent of each subject, and that only a server of version 0.4 is accepted; how the quality check of a subject is put into words — each label's state, the history, the requests, whose correction the segmentation is, and the server's word on an upload; and the round trip of a BoneHub `.seg.nrrd` through the scene: that labels, voxels and the voxel grid come back unchanged (on an oblique image), that renaming a segment relabels it, that a missing bone can be added, that a segmentation edited without its image is written back on the image's grid, that a subject sent without its segmentation is painted from scratch and written back on the image's grid, that the segmentation sent gets a 3D model per label which changes no voxel of the upload, and one painted from scratch none, that the bones can be given distinct colours, neighbours far apart and a bone added in the next colour, which the Segment Editor lists and the views draw alike, while the upload is written in BoneHub colours and unticking gives each segment its BoneHub colour back, that a subject sent neither file is not loaded, that every subject starts from an empty scene, and that a segment which is not a BoneHub label is refused |
+| `Testing/Python/BoneHubQualityCheckModuleTest.py` | The panel: that the `.ui` file still carries every widget the code uses, that the sections stay locked until there is something to do, that the key stays masked, that the editor sees why a subject came to them — the labels rejected and missing, which stand out, the administrator's requests, the history with its comments, and an earlier editor's correction — that a missing bone is picked for *Add segment*, that a subject without a segmentation opens for painting from scratch (with a warning for an account sent images only when the server has a segmentation it was not sent), that a subject sent neither file can only be rejected, that the Segment Editor can edit a subject without its image, that *Show the segmentation in 3D* builds and takes away the models of the segmentation sent, and is locked for one painted from scratch, that *Give each bone a distinct colour* recolours the bones and back, in the Segment Editor's list, the views and the labels table alike, and colours a subject loaded while it is on and a bone added, that tick boxes appear only when the server takes an editor's word and behave across a refresh, what confirming asks, sends and reports under either setting, that rejecting sends the subject to the administrator, and that an empty queue speaks of correcting |
 
 The first also runs from **Reload and Test** in the module's *Advanced* section. Running
 either against a source checkout, with `MODULE` standing for the path to the
