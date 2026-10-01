@@ -1,7 +1,7 @@
 # BoneHub Dataset Quality Check — 3D Slicer extension
 
 Editor client for the [BoneHub dataset quality-check
-server](https://github.com/BoneHub/qc-server), the human half of
+server](https://github.com/BoneHub/Quality-Check-Server), the human half of
 a client–server setup for quality check of segmentations in the
 [BoneHub Dataset](https://github.com/BoneHub/BoneHub-Dataset).
 
