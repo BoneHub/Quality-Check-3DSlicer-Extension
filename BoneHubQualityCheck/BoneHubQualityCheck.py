@@ -202,8 +202,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.serverUrlLineEdit.returnPressed.connect(self.onConnect)
         self.ui.apiKeyLineEdit.returnPressed.connect(self.onConnect)
 
-        self.ui.nextSubjectButton.clicked.connect(self.onNextSubject)
-        self.ui.reloadSubjectButton.clicked.connect(self.onReloadSubject)
+        self.ui.subjectButton.clicked.connect(self.onSubjectButton)
         self.ui.extendLeaseButton.clicked.connect(self.onExtendLease)
         self.ui.releaseSubjectButton.clicked.connect(self.onReleaseSubject)
 
@@ -304,11 +303,18 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.populateAddLabelComboBox()
         self.ui.subjectCollapsibleButton.collapsed = False
         self.updateGuiFromSession()
+        self.resumeSubjectInHand()
 
     # -------------------------------------------------------------- subjects
+    def onSubjectButton(self):
+        """The one subject button: it reloads the subject in hand, or leases the next one. The
+        server hands an editor one subject at a time, so there is never a choice to make."""
+        if self.logic.session.has_subject:
+            self.onReloadSubject()
+        else:
+            self.onNextSubject()
+
     def onNextSubject(self):
-        if not self.confirmDiscardingCurrentSubject():
-            return
         self.applySettingsToSession()
         session = self.logic.session
         self.clearReview()
@@ -331,40 +337,72 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.downloadAndLoad(handout)
 
     def onReloadSubject(self):
-        """Pick up a subject this editor already holds, after a restart or a lost scene."""
-        self.applySettingsToSession()
+        """Load the subject in hand again as the server has it, discarding the corrections not
+        uploaded: to start a correction over, or after losing the scene."""
         session = self.logic.session
+        key = session.subject_key
+        if not slicer.util.confirmYesNoDisplay(
+            _("Load {key} again as the server has it? Your corrections to it have not been uploaded, and "
+              "they will be discarded.").format(key=key),
+            windowTitle=_("Reload subject"),
+        ):
+            return
+        self.applySettingsToSession()
         try:
-            assignments = self.runWithProgress(_("Looking up your open subjects..."), session.open_assignments)
+            held = self.runWithProgress(_("Looking up your subject..."), session.open_assignments)
         except QCClientError as error:
-            slicer.util.errorDisplay(str(error), windowTitle=_("Could not list your subjects"))
+            slicer.util.errorDisplay(str(error), windowTitle=_("Could not reload the subject"))
             return
-        if not assignments:
-            text = _("You are not holding any subject to correct. Use 'Get next subject'.")
-            if "reviewer" in (session.server_info.get("roles") or []):
-                text += "\n\n" + _("Subjects you hold as a reviewer, on the review page, are not listed here.")
-            slicer.util.infoDisplay(text, windowTitle=_("Nothing in hand"))
-            return
-
-        assignment = assignments[0]
-        if len(assignments) > 1:
-            choices = [f"{a.get('subject_key')} (expires {a.get('expires_at')})" for a in assignments]
-            chosen = qt.QInputDialog.getItem(
-                slicer.util.mainWindow(), _("Subjects in hand"), _("Reload which subject?"), choices, 0, False
+        # The server still answers for a subject whose lease has ended, so check it is held.
+        assignment = next((a for a in held if a.get("assignment_id") == session.assignment_id), None)
+        if assignment is None:
+            session.clear_subject()
+            self.clearReview()
+            self.updateGuiFromSession()
+            slicer.util.infoDisplay(
+                _("Your lease on {key} has ended, so it is no longer yours to correct. Use 'Get next "
+                  "subject'.").format(key=key),
+                windowTitle=_("Lease ended"),
             )
-            if not chosen:
-                return
-            assignment = assignments[choices.index(chosen)]
-
-        if not self.confirmDiscardingCurrentSubject():
             return
+        self.loadAssignment(assignment)
+
+    def resumeSubjectInHand(self):
+        """After connecting, load the subject this editor already holds, as after restarting
+        Slicer. A reconnect while a subject is loaded leaves it, and the corrections to it, as
+        they are."""
+        session = self.logic.session
+        if session.has_subject:
+            return
+        try:
+            held = self.runWithProgress(_("Looking up your subject..."), session.open_assignments)
+        except QCClientError as error:
+            # Nothing is lost: 'Get next subject' hands the same subject back.
+            logging.warning("BoneHub quality check: could not look up the subject in hand: %s", error)
+            return
+        if not held:
+            return
+        self.loadAssignment(held[0])
+        if session.has_subject:
+            self.setStatus(
+                self.ui.connectionStatusLabel,
+                self.ui.connectionStatusLabel.text + " "
+                + _("You still hold {key}, so it is loaded again.").format(key=session.subject_key),
+                ok=True,
+            )
+
+    def loadAssignment(self, assignment):
+        """Fetch the handout of a subject this editor holds, then its files."""
+        session = self.logic.session
         self.clearReview()
         try:
             handout = self.runWithProgress(
-                _("Fetching the subject..."), lambda: session.reload_assignment(assignment["assignment_id"])
+                _("Fetching {key}...").format(key=assignment.get("subject_key", "")),
+                lambda: session.reload_assignment(assignment["assignment_id"]),
             )
         except QCClientError as error:
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not fetch the subject"))
+            self.updateGuiFromSession()
             return
         self.downloadAndLoad(handout)
 
@@ -474,20 +512,6 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not release the subject"))
             return
         self.finishSubject(_("Subject released. It is back in the queue, waiting for an editor."), ok=True)
-
-    def confirmDiscardingCurrentSubject(self):
-        """Warn before walking away from a subject that is still leased."""
-        session = self.logic.session
-        if not session.has_subject:
-            return True
-        return slicer.util.confirmYesNoDisplay(
-            _("You are still holding {key}, and your corrections to it have not been uploaded. "
-              "They will be discarded. The subject stays leased to you, and if you are already "
-              "at your limit the server will simply hand {key} back. Continue?").format(
-                key=session.subject_key
-            ),
-            windowTitle=_("Subject still in hand"),
-        )
 
     def clearReview(self):
         """Empty the scene and the panel of the last subject.
@@ -910,8 +934,17 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Editor's Show 3D button is there for it once there is something painted.
         self.ui.show3DCheckBox.enabled = holding and self.segmentationSent()
         self.ui.distinctColoursCheckBox.enabled = loaded
-        self.ui.nextSubjectButton.enabled = connected
-        self.ui.reloadSubjectButton.enabled = connected
+        # One subject at a time: the button says what it does with the one in hand, if any.
+        self.ui.subjectButton.enabled = connected
+        if holding:
+            self.ui.subjectButton.text = _("Reload subject from server")
+            self.ui.subjectButton.toolTip = _(
+                "Load the subject again as the server has it, discarding the corrections you have not uploaded. "
+                "To move on, upload, reject or release it."
+            )
+        else:
+            self.ui.subjectButton.text = _("Get next subject")
+            self.ui.subjectButton.toolTip = _("Lease the next subject waiting for an editor and load it into the scene.")
         self.ui.extendLeaseButton.enabled = holding
         self.ui.releaseSubjectButton.enabled = holding
         self.ui.connectButton.text = _("Reconnect") if connected else _("Connect")
@@ -1648,7 +1681,6 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         "edits_need_review": True,
         "mark_removed_labels_absent": True,
         "lease_ttl_seconds": 86400,
-        "max_concurrent_assignments": 1,
     }
 
     #: ... and its ``GET /api/v1/labels``, with the labels of :data:`LABELS`.

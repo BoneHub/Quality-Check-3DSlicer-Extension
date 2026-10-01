@@ -128,28 +128,14 @@
      </property>
      <layout class="QVBoxLayout" name="subjectLayout">
       <item>
-       <layout class="QHBoxLayout" name="subjectButtonsLayout">
-        <item>
-         <widget class="QPushButton" name="nextSubjectButton">
-          <property name="toolTip">
-           <string>Lease the next subject waiting for an editor and load it into the scene.</string>
-          </property>
-          <property name="text">
-           <string>Get next subject</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="reloadSubjectButton">
-          <property name="toolTip">
-           <string>Load a subject you are already holding again, for instance after restarting Slicer.</string>
-          </property>
-          <property name="text">
-           <string>Reload subject in hand</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
+       <widget class="QPushButton" name="subjectButton">
+        <property name="toolTip">
+         <string>Lease the next subject waiting for an editor and load it into the scene.</string>
+        </property>
+        <property name="text">
+         <string>Get next subject</string>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QLabel" name="subjectKeyLabel">

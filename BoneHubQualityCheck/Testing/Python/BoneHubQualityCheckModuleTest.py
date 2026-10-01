@@ -3,7 +3,8 @@
 The tests in ``BoneHubQualityCheck.py`` itself cover the logic that touches the dataset, and
 how the quality check of a subject is put into words. These cover the panel: that the .ui
 file still carries every widget the code reaches for, that the sections stay locked until
-there is something to do, that the editor sees why a subject came to them -- the labels
+there is something to do, that one button leases the next subject or reloads the one in hand
+and connecting picks that one up again, that the editor sees why a subject came to them -- the labels
 rejected and why, the bones reported missing, the administrator's requests, the history with
 its comments, and whose correction the segmentation is -- that a missing bone is ready to
 add, that a subject sent without its segmentation is painted from scratch and one sent
@@ -28,7 +29,7 @@ from BoneHubQualityCheckLib.labels import LabelMap, distinct_color, label_color
 EXPECTED_WIDGETS = [
     "serverUrlLineEdit", "apiKeyLineEdit", "showKeyCheckBox", "rememberKeyCheckBox",
     "connectButton", "connectionStatusLabel", "serverCollapsibleButton",
-    "nextSubjectButton", "reloadSubjectButton", "subjectKeyLabel", "expiresLabel",
+    "subjectButton", "subjectKeyLabel", "expiresLabel",
     "caseTextBrowser", "subjectInfoTextBrowser", "extendLeaseButton", "releaseSubjectButton",
     "subjectCollapsibleButton", "labelsTableWidget", "labelsSummaryLabel",
     "refreshLabelsButton", "selectAllLabelsButton", "selectNoLabelsButton",
@@ -94,6 +95,8 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         self.setUp()
         self.test_PanelHasEveryWidgetTheCodeUses()
         self.test_SectionsAreLockedUntilThereIsSomethingToDo()
+        self.test_OneButtonGetsOrReloadsTheSubject()
+        self.test_ConnectingPicksUpTheSubjectInHand()
         self.test_TheKeyIsMaskedUnlessAsked()
         self.test_LabelPickerIsInAnatomicalOrder()
         self.test_TheEditorSeesWhyTheSubjectCameToThem()
@@ -183,6 +186,85 @@ class BoneHubQualityCheckModuleTest(ScriptedLoadableModuleTest):
         self.assertFalse(widget.ui.subjectCollapsibleButton.enabled)
         self.assertFalse(widget.ui.reviewCollapsibleButton.enabled)
         self.assertFalse(widget.ui.submitCollapsibleButton.enabled)
+
+    def heldOnTheServer(self, widget, session):
+        """Have the server hold the two-label subject for the editor, and the panel note what
+        it loads rather than download it; return the keys loaded."""
+        loaded = []
+
+        def reload(assignment_id):
+            session.handout = handout(assignment_id=assignment_id)
+            return session.handout
+
+        session.reload_assignment = reload
+        session.open_assignments = lambda: [{"assignment_id": "a1", "subject_key": "001_000001"}]
+        widget.downloadAndLoad = lambda sent: loaded.append(sent["subject_key"])
+        return loaded
+
+    def test_OneButtonGetsOrReloadsTheSubject(self):
+        """Holding nothing, the button leases the next subject. Holding one, it reloads it as the
+        server has it, after asking, or says the lease has ended."""
+        self.delayDisplay("One subject button")
+        widget = self.widget()
+        logic = self.subjectInScene(widget)
+        session = logic.session
+        button = widget.ui.subjectButton
+        self.assertEqual(button.text, "Reload subject from server")
+        session.clear_subject()
+        widget.updateGuiFromSession()
+        self.assertEqual(button.text, "Get next subject")
+
+        session.handout = handout()
+        widget.updateGuiFromSession()
+        loaded = self.heldOnTheServer(widget, session)
+        asked, told = [], []
+        originalAsk, originalTell = slicer.util.confirmYesNoDisplay, slicer.util.infoDisplay
+        slicer.util.confirmYesNoDisplay = lambda text, **kwargs: asked.append(text) or True
+        slicer.util.infoDisplay = lambda text, **kwargs: told.append(text)
+        try:
+            # The panel is not connected here, so the button is pressed through its handler.
+            widget.onSubjectButton()
+            self.assertEqual(loaded, ["001_000001"])
+            self.assertIn("Load 001_000001 again as the server has it?", asked[0])
+
+            # The lease ran out on the server: the subject is let go of, not loaded.
+            session.open_assignments = lambda: []
+            widget.onSubjectButton()
+            self.assertEqual(loaded, ["001_000001"])
+            self.assertFalse(session.has_subject)
+            self.assertIn("Your lease on 001_000001 has ended", told[0])
+            self.assertEqual(button.text, "Get next subject")
+        finally:
+            slicer.util.confirmYesNoDisplay, slicer.util.infoDisplay = originalAsk, originalTell
+            del widget.downloadAndLoad
+
+    def test_ConnectingPicksUpTheSubjectInHand(self):
+        """After restarting Slicer, connecting loads the subject the editor holds. A reconnect
+        with a subject loaded leaves it, and the corrections to it, alone."""
+        self.delayDisplay("Resume on connecting")
+        widget = self.widget()
+        logic = self.subjectInScene(widget)
+        session = logic.session
+        loaded = self.heldOnTheServer(widget, session)
+        try:
+            widget.resumeSubjectInHand()
+            self.assertEqual(loaded, [], "the subject loaded is left as it is")
+
+            session.clear_subject()
+            widget.ui.connectionStatusLabel.text = "Connected."
+            widget.resumeSubjectInHand()
+            self.assertEqual(loaded, ["001_000001"])
+            self.assertTrue(session.has_subject)
+            self.assertIn("You still hold 001_000001, so it is loaded again.", widget.ui.connectionStatusLabel.text)
+
+            # Holding nothing, the editor is left to ask for the next subject.
+            session.clear_subject()
+            session.open_assignments = lambda: []
+            widget.resumeSubjectInHand()
+            self.assertEqual(loaded, ["001_000001"])
+            self.assertFalse(session.has_subject)
+        finally:
+            del widget.downloadAndLoad
 
     def test_TheKeyIsMaskedUnlessAsked(self):
         """The key is a credential; it must not sit on screen in a shared lab."""
