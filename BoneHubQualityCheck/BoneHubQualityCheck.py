@@ -114,7 +114,8 @@ blank volume.
 <p><i>Confirm and submit</i> uploads your correction, which waits on the server. The labels you
 changed or added, and those a reviewer rejected, go back to a reviewer, unless the server
 takes your word for them: then the ones you tick are accepted. Connecting says which. The
-labels you left alone keep their verdicts. Nothing reaches the dataset before the
+labels you left alone keep their verdicts; a label nobody has reviewed yet is accepted too
+when the server takes your word and you tick it. Nothing reaches the dataset before the
 administrator approves the subject.
 <p><i>Reject</i> is for a subject you cannot correct: it goes to the administrator with your
 comment, and nothing in the dataset changes.
@@ -636,8 +637,9 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             if toAdd:
                 parts.append(_("Reported missing, still to add: {names}.").format(names=", ".join(toAdd)))
             if inSegmentation and ticks:
-                parts.append(_("Of the labels you change or add, and those a reviewer rejected, the ticked ones "
-                               "are accepted on your word; the others go back to a reviewer."))
+                parts.append(_("Of the labels you change or add, those a reviewer rejected and those nobody has "
+                               "reviewed yet, the ticked ones are accepted on your word; the others go back to a "
+                               "reviewer."))
             elif inSegmentation:
                 parts.append(_("The labels you change or add, and those a reviewer rejected, go back to a "
                                "reviewer."))
@@ -813,9 +815,10 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 paragraphs.append(_("Reported missing, and not in your upload: {names}. A reviewer will see that "
                                     "you left them out.").format(names=", ".join(notAdded)))
         else:
-            paragraphs.append(_("Of the labels you changed or added, and those a reviewer rejected, the ticked "
-                                "ones are accepted on your word and the others go back to a reviewer. The labels "
-                                "you left alone keep their verdicts, ticked or not."))
+            paragraphs.append(_("Of the labels you changed or added, those a reviewer rejected and those nobody "
+                                "has reviewed yet, the ticked ones are accepted on your word and the others go "
+                                "back to a reviewer. The other labels you left alone keep their verdicts, ticked "
+                                "or not."))
             paragraphs.append(_("Ticked: {names}.").format(names=", ".join(vouched) or _("none")))
             if removed:
                 paragraphs.append(_("Taken out: {names}.").format(names=", ".join(removed)))
@@ -1423,8 +1426,8 @@ def _labelTip(name, value, present, ticks):
     if not present:
         return tip + " " + _("Not in your segmentation: click it to pick it for 'Add segment'.")
     if ticks:
-        return tip + " " + _("Tick it to vouch for it: if you changed or added it, or a reviewer rejected it, it "
-                             "is accepted on your word.")
+        return tip + " " + _("Tick it to vouch for it: if you changed or added it, a reviewer rejected it, or "
+                             "nobody has reviewed it yet, it is accepted on your word.")
     return tip
 
 

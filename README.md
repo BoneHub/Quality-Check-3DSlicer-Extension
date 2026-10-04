@@ -149,7 +149,8 @@ status line reports when you connect:
 | Label | Corrections go back to a reviewer (the default) | The server takes an editor's word |
 | --- | --- | --- |
 | Changed or added by you, or rejected by a reviewer | goes back to a reviewer | accepted if you tick it, else goes back to a reviewer |
-| Left as it was | keeps its verdict | keeps its verdict, ticked or not |
+| Left as it was, and nobody has reviewed it yet | still waits for a reviewer | accepted if you tick it, else still waits for a reviewer |
+| Left as it was, with a verdict | keeps its verdict | keeps its verdict, ticked or not |
 | Taken out | removed once a reviewer agrees | removed |
 | Reported missing, and not added | goes back to a reviewer, who sees you left it out | stays out |
 
