@@ -94,7 +94,7 @@ class BoneHubQualityCheck(ScriptedLoadableModule):
         self.parent.dependencies = ["Segmentations", "SegmentEditor"]
         self.parent.contributors = ["Hamid Alavi (University of Twente)"]
         self.parent.helpText = _("""
-Editor client for the <a href="https://github.com/BoneHub/qc-server">BoneHub
+Editor client for the <a href="https://github.com/BoneHub/Quality-Check-Server">BoneHub
 quality-check server</a>, which runs the quality check of a database in the BoneHub format. Enter
 the server URL and the API key your administrator gave you, ask for the next scan, correct its
 segmentation in the Segment Editor, and upload the correction.

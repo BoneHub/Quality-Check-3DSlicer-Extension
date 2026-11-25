@@ -1,4 +1,4 @@
-# Vendored verbatim from qc-server (qc_server/client.py). Do not edit here: change it in
+# Vendored verbatim from Quality-Check-Server (qc_server/client.py). Do not edit here: change it in
 # the server repository and copy the file across, so both sides stay on the same API.
 """A reference client for the quality-check server, written against the standard library only.
 
