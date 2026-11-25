@@ -1,6 +1,6 @@
 # BoneHub Quality Check — 3D Slicer extension
 
-Editor client for the [BoneHub quality-check server](https://github.com/BoneHub/qc-server),
+Editor client for the [BoneHub quality-check server](https://github.com/BoneHub/Quality-Check-Server),
 the human half of a client–server setup for the quality check of the segmentations in a
 database in the [BoneHub format](https://github.com/BoneHub/BoneHub-Format).
 
@@ -264,7 +264,7 @@ BoneHubQualityCheck/
 
 Nothing in `BoneHubQualityCheckLib` imports Slicer, so the server-facing half can be run and
 tested on its own. `client.py` is a verbatim copy of the server's
-[`qc_server/client.py`](https://github.com/BoneHub/qc-server/blob/main/qc_server/client.py);
+[`qc_server/client.py`](https://github.com/BoneHub/Quality-Check-Server/blob/main/qc_server/client.py);
 change it there and copy it across, so both sides stay on one definition of the API.
 
 ## Tests
