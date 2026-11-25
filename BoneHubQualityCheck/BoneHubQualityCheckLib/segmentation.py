@@ -1,7 +1,7 @@
 """Writing the corrected segmentation in BoneHub's segmentation format (``.seg.nrrd``).
 
-The format is the one ``bonehub_data_schema/segmentation_file.py`` defines, and the one the
-dataset's own files are in: voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or
+The format is the one ``bonehub_format/segmentation_file.py`` defines, and the one the
+database's own files are in: voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or
 uint16 above 255 segments), and the header maps each number to its BoneHub label and
 records the segment's colour and extent. 3D Slicer opens such a file as a segmentation with
 one segment per label, named after it.

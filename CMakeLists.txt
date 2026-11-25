@@ -4,11 +4,11 @@ project(BoneHubQualityCheck)
 
 #-----------------------------------------------------------------------------
 # Extension meta-information
-set(EXTENSION_HOMEPAGE "https://github.com/BoneHub/qc-slicer")
+set(EXTENSION_HOMEPAGE "https://github.com/BoneHub/Quality-Check-3DSlicer-Extension")
 set(EXTENSION_CATEGORY "Segmentation")
 set(EXTENSION_CONTRIBUTORS "Hamid Alavi (University of Twente)")
-set(EXTENSION_DESCRIPTION "Editor client for the BoneHub quality-check server. Leases one subject at a time, loads its image and segmentation for correcting, and sends the corrected segmentation back.")
-set(EXTENSION_ICONURL "https://raw.githubusercontent.com/BoneHub/qc-slicer/main/BoneHubQualityCheck.png")
+set(EXTENSION_DESCRIPTION "Editor client for the BoneHub quality-check server, for databases in the BoneHub format. Leases one scan at a time, loads its image and segmentation for correcting, and sends the corrected segmentation back.")
+set(EXTENSION_ICONURL "https://raw.githubusercontent.com/BoneHub/Quality-Check-3DSlicer-Extension/main/BoneHubQualityCheck.png")
 set(EXTENSION_SCREENSHOTURLS "")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies
 

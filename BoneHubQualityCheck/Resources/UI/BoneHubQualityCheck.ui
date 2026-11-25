@@ -119,28 +119,28 @@
     </widget>
    </item>
    <item>
-    <widget class="ctkCollapsibleButton" name="subjectCollapsibleButton">
+    <widget class="ctkCollapsibleButton" name="scanCollapsibleButton">
      <property name="enabled">
       <bool>false</bool>
      </property>
      <property name="text">
-      <string>Subject</string>
+      <string>Scan</string>
      </property>
-     <layout class="QVBoxLayout" name="subjectLayout">
+     <layout class="QVBoxLayout" name="scanLayout">
       <item>
-       <widget class="QPushButton" name="subjectButton">
+       <widget class="QPushButton" name="scanButton">
         <property name="toolTip">
-         <string>Lease the next subject waiting for an editor and load it into the scene.</string>
+         <string>Lease the next scan waiting for an editor and load it into the scene.</string>
         </property>
         <property name="text">
-         <string>Get next subject</string>
+         <string>Get next scan</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="subjectKeyLabel">
+       <widget class="QLabel" name="scanKeyLabel">
         <property name="text">
-         <string>No subject in hand.</string>
+         <string>No scan in hand.</string>
         </property>
         <property name="textInteractionFlags">
          <set>Qt::TextSelectableByMouse</set>
@@ -157,7 +157,7 @@
       <item>
        <widget class="QTextBrowser" name="caseTextBrowser">
         <property name="toolTip">
-         <string>Why this subject came to you: the labels a reviewer rejected or reported missing, the administrator's requests, and the subject's quality check so far, with its comments.</string>
+         <string>Why this scan came to you: the labels a reviewer rejected or reported missing, the administrator's requests, and the scan's quality check so far, with its comments.</string>
         </property>
         <property name="minimumSize">
          <size>
@@ -172,14 +172,14 @@
          </size>
         </property>
         <property name="placeholderText">
-         <string>Once you hold a subject: why it came to you, and its history.</string>
+         <string>Once you hold a scan: why it came to you, and its history.</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QTextBrowser" name="subjectInfoTextBrowser">
+       <widget class="QTextBrowser" name="scanInfoTextBrowser">
         <property name="toolTip">
-         <string>The subject's entry in Subject_info_XXX.json, without the per-label dictionaries.</string>
+         <string>What the database says of the scan: its dataset's name, its subject's subject.json and its own scan.json, without the labels and their origins.</string>
         </property>
         <property name="maximumSize">
          <size>
@@ -194,7 +194,7 @@
         <item>
          <widget class="QPushButton" name="extendLeaseButton">
           <property name="toolTip">
-           <string>Keep the subject longer, while you are still working on it.</string>
+           <string>Keep the scan longer, while you are still working on it.</string>
           </property>
           <property name="text">
            <string>Extend lease</string>
@@ -202,12 +202,12 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="releaseSubjectButton">
+         <widget class="QPushButton" name="releaseScanButton">
           <property name="toolTip">
-           <string>Give the subject back to the queue without uploading anything. Your corrections are lost.</string>
+           <string>Give the scan back to the queue without uploading anything. Your corrections are lost.</string>
           </property>
           <property name="text">
-           <string>Release subject</string>
+           <string>Release scan</string>
           </property>
          </widget>
         </item>
@@ -228,7 +228,7 @@
       <item>
        <widget class="QPushButton" name="segmentEditorButton">
         <property name="toolTip">
-         <string>Switch to the Segment Editor with this subject's segmentation selected, and its image when the server sent one.</string>
+         <string>Switch to the Segment Editor with this scan's segmentation selected, and its image when the server sent one.</string>
         </property>
         <property name="text">
          <string>Correct in Segment Editor</string>
@@ -258,7 +258,7 @@
       <item>
        <widget class="QTableWidget" name="labelsTableWidget">
         <property name="toolTip">
-         <string>Every label of this subject: what the quality check has made of it so far, its status in Subject_info, and whether your segmentation paints it. A segment's name is its label: rename a segment to relabel it.</string>
+         <string>Every label of this scan: what the quality check has made of it so far, its origin in scan.json, and whether your segmentation paints it. A segment's name is its label: rename a segment to relabel it.</string>
         </property>
         <property name="alternatingRowColors">
          <bool>true</bool>
@@ -380,7 +380,7 @@
       <item>
        <widget class="QLabel" name="commentLabel">
         <property name="text">
-         <string>Comment (kept in the subject's history):</string>
+         <string>Comment (kept in the scan's history):</string>
         </property>
        </widget>
       </item>
@@ -393,7 +393,7 @@
          </size>
         </property>
         <property name="placeholderText">
-         <string>What you changed, or why you cannot correct this subject.</string>
+         <string>What you changed, or why you cannot correct this scan.</string>
         </property>
        </widget>
       </item>
@@ -402,7 +402,7 @@
         <item>
          <widget class="QPushButton" name="confirmButton">
           <property name="toolTip">
-           <string>Upload your corrected segmentation. It waits on the server, and nothing reaches the dataset before the administrator approves the subject.</string>
+           <string>Upload your corrected segmentation. It waits on the server, and nothing reaches the dataset before the administrator approves the scan.</string>
           </property>
           <property name="text">
            <string>Confirm and submit</string>
@@ -412,7 +412,7 @@
         <item>
          <widget class="QPushButton" name="rejectButton">
           <property name="toolTip">
-           <string>Send the subject to the administrator, with your comment, when you cannot correct it. Nothing in the dataset changes.</string>
+           <string>Send the scan to the administrator, with your comment, when you cannot correct it. Nothing in the dataset changes.</string>
           </property>
           <property name="text">
            <string>Reject</string>
@@ -424,10 +424,10 @@
       <item>
        <widget class="QCheckBox" name="autoNextCheckBox">
         <property name="toolTip">
-         <string>Ask for the next subject as soon as this one is submitted.</string>
+         <string>Ask for the next scan as soon as this one is submitted.</string>
         </property>
         <property name="text">
-         <string>Get the next subject after submitting</string>
+         <string>Get the next scan after submitting</string>
         </property>
        </widget>
       </item>

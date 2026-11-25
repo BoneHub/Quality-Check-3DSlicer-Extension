@@ -1,18 +1,19 @@
 """Editor client for the BoneHub quality-check server.
 
-The module walks an editor through one subject at a time:
+The server hands out the scans of a database in the BoneHub format, each named by its path,
+``ds-0027/sub-000001/scan-01``. The module walks an editor through one scan at a time:
 
 1. connect to the server with the editor's API key,
-2. lease the next subject waiting for an editor -- one a reviewer sent back, with a label
+2. lease the next scan waiting for an editor -- one a reviewer sent back, with a label
    rejected or a bone reported missing, or one without any segmentation -- and load what
    the server sends of it, its image, its segmentation or both, into the scene,
 3. show why it came: the labels rejected and why, the bones reported missing, the
-   administrator's requests and the subject's history,
+   administrator's requests and the scan's history,
 4. correct the segmentation in the Segment Editor, or paint one from scratch,
-5. confirm, which uploads the correction, or reject, which sends the subject to the
+5. confirm, which uploads the correction, or reject, which sends the scan to the
    administrator. Either waits on the server: the labels a correction changes go back to a
    reviewer, unless the server takes the editor's word for them, and nothing reaches the
-   dataset before the administrator approves the subject.
+   dataset before the administrator approves the scan.
 
 The server gives each account the role of reviewer, editor, or both, and this module works as
 an editor. An account that is a reviewer only is refused when connecting and pointed to the
@@ -21,12 +22,12 @@ server's review page, where reviewers work.
 Either file is enough to work on. Without the segmentation, the editor starts from an empty
 one on the image, adds the labels and paints them. Without the image, the segmentation is
 edited and written back on its own voxel grid, which is the image's on the server. Only a
-subject that comes with neither is not loaded, and is offered for rejection. The segmentation
+scan that comes with neither is not loaded, and is offered for rejection. The segmentation
 sent is the one under review: an earlier editor's correction waiting on the server, or the
 dataset's own.
 
-Segmentations travel in the BoneHub dataset's own format, ``.seg.nrrd``, which 3D Slicer
-opens natively with one segment per label. In the scene a segment's name is its label, so
+Segmentations travel in the BoneHub format's own segmentation files, ``.seg.nrrd``, which 3D
+Slicer opens natively with one segment per label. In the scene a segment's name is its label, so
 renaming a segment in the Segment Editor relabels it. See ``BoneHubQualityCheckLib`` for the
 server-facing half, which has no dependency on Slicer.
 """
@@ -55,12 +56,12 @@ from slicer.util import VTKObservationMixin
 
 from BoneHubQualityCheckLib import QCClientError
 from BoneHubQualityCheckLib.labels import (
-    LABEL_STATUS_VALUES,
+    ORIGIN_KINDS,
     LabelMap,
     distinct_color,
     label_color,
+    origin_kind,
     schema_is_supported,
-    status_text,
 )
 from BoneHubQualityCheckLib.segmentation import (
     LABEL_TAG,
@@ -93,21 +94,21 @@ class BoneHubQualityCheck(ScriptedLoadableModule):
         self.parent.dependencies = ["Segmentations", "SegmentEditor"]
         self.parent.contributors = ["Hamid Alavi (University of Twente)"]
         self.parent.helpText = _("""
-Editor client for the <a href="https://github.com/BoneHub/Quality-Check-Server">BoneHub
-quality-check server</a>. Enter the server URL and the API key your administrator
-gave you, ask for the next subject, correct its segmentation in the Segment Editor, and
-upload the correction.
+Editor client for the <a href="https://github.com/BoneHub/qc-server">BoneHub
+quality-check server</a>, which runs the quality check of a database in the BoneHub format. Enter
+the server URL and the API key your administrator gave you, ask for the next scan, correct its
+segmentation in the Segment Editor, and upload the correction.
 <p>The key must belong to an account with the editor role. Reviewers work in the browser
 instead, on the server's review page, and the key of an account that is a reviewer only is
 refused here.
-<p>Reviewers judge each subject first. You are handed the subjects they send back, with a
-label rejected or a bone reported missing, and the subjects that have no segmentation yet. A
+<p>Reviewers judge each scan first. You are handed the scans they send back, with a
+label rejected or a bone reported missing, and the scans that have no segmentation yet. A
 rejected label is yours to judge: correct it, or delete its segment if the bone should not be
-there. The <i>Subject</i> section says why a subject came to you, with the administrator's
+there. The <i>Scan</i> section says why a scan came to you, with the administrator's
 requests and the history of its quality check, and the labels table marks the rejected and
 missing labels. A missing bone is picked for <i>Add segment</i> already.
 <p>The segmentation you are sent is the one under review, which may be an earlier editor's
-correction waiting on the server; the <i>Subject</i> section says so. A subject sent without a
+correction waiting on the server; the <i>Scan</i> section says so. A scan sent without a
 segmentation starts from an empty one on the image: add each label with <i>Add segment</i> and
 paint it. One sent without its image is edited on the segmentation's own voxel grid, over a
 blank volume.
@@ -116,26 +117,26 @@ changed or added, and those a reviewer rejected, go back to a reviewer, unless t
 takes your word for them: then the ones you tick are accepted. Connecting says which. The
 labels you left alone keep their verdicts; a label nobody has reviewed yet is accepted too
 when the server takes your word and you tick it. Nothing reaches the dataset before the
-administrator approves the subject.
-<p><i>Reject</i> is for a subject you cannot correct: it goes to the administrator with your
+administrator approves the scan. Approving records each label you drew or changed as
+<i>manual</i> in the scan's scan.json; the others keep their origin.
+<p><i>Reject</i> is for a scan you cannot correct: it goes to the administrator with your
 comment, and nothing in the dataset changes.
 <p>A segment's name is its BoneHub label: rename a segment to relabel it.
 <p><i>Show the segmentation in 3D</i> builds 3D models of the segmentation the server sent, one per
-label, and shows them in the 3D view. The tick is remembered for the subjects that follow. The
+label, and shows them in the 3D view. The tick is remembered for the scans that follow. The
 models follow your corrections, which slows the Segment Editor on a large segmentation: untick it
 to take them away.
 <p><i>Give each bone a distinct colour</i> gives every segment a colour of its own, so that
 neighbouring bones stand apart where BoneHub colours the bones of a body region in near shades. The
 Segment Editor's list, the views and the labels table show the same colours, so a bone seen in a
 view is found in the list by its colour. Your upload is still written in the BoneHub colours, and
-unticking gives the segments their BoneHub colours back. The tick is remembered for the subjects
+unticking gives the segments their BoneHub colours back. The tick is remembered for the scans
 that follow.
-<p>Each subject is loaded into an empty scene. The scene is closed when you leave a subject,
+<p>Each scan is loaded into an empty scene. The scene is closed when you leave a scan,
 so anything else you loaded into it goes as well.
 """)
         self.parent.acknowledgementText = _("""
-Developed for the BoneHub Dataset at the Department of Biomechanical Engineering,
-University of Twente.
+Developed for BoneHub at the Department of Biomechanical Engineering, University of Twente.
 """)
 
 
@@ -168,7 +169,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # takes the room that is left, wrapping onto as many lines as it needs there: rows are
         # fitted to it again whenever the columns change width.
         table = self.ui.labelsTableWidget
-        table.setHorizontalHeaderLabels([_("Label"), _("Quality check"), _("Dataset"), _("Painted")])
+        table.setHorizontalHeaderLabels([_("Label"), _("Quality check"), _("Origin"), _("Painted")])
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, qt.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, qt.QHeaderView.Stretch)
@@ -186,15 +187,15 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             (
                 _("BoneHub label name. A segment's name is its label."),
                 _("What the quality check has made of the label so far, and who said so: rejected, for you to "
-                  "correct or delete; missing; accepted; to review; kept, as the dataset has it reviewed already; "
-                  "or removed."),
-                _("The label's status in Subject_info today: 0 not available, 1 not reviewed, 2 reviewed. It "
-                  "changes only when the administrator approves the subject."),
+                  "correct or delete; missing; accepted; to review; kept, as it is not under review; or removed."),
+                _("Where the label comes from, as the scan's scan.json records it: source, manual, model or "
+                  "derived, and whether it has been reviewed on this database. It changes only when the "
+                  "administrator approves the scan: a label you drew or changed becomes manual."),
                 _("Whether this label has a segment in the segmentation you are correcting."),
             )
         ):
             self.ui.labelsTableWidget.horizontalHeaderItem(column).setToolTip(tip)
-        # Lists in the narrow Subject section, indented by a little rather than by Qt's 40 pixels.
+        # Lists in the narrow Scan section, indented by a little rather than by Qt's 40 pixels.
         self.ui.caseTextBrowser.document.setIndentWidth(14)
 
         # Connections
@@ -203,9 +204,9 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.serverUrlLineEdit.returnPressed.connect(self.onConnect)
         self.ui.apiKeyLineEdit.returnPressed.connect(self.onConnect)
 
-        self.ui.subjectButton.clicked.connect(self.onSubjectButton)
+        self.ui.scanButton.clicked.connect(self.onScanButton)
         self.ui.extendLeaseButton.clicked.connect(self.onExtendLease)
-        self.ui.releaseSubjectButton.clicked.connect(self.onReleaseSubject)
+        self.ui.releaseScanButton.clicked.connect(self.onReleaseScan)
 
         self.ui.refreshLabelsButton.clicked.connect(self.refreshFromScene)
         self.ui.labelsTableWidget.cellClicked.connect(self.onLabelCellClicked)
@@ -289,7 +290,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.saveSettings()
         datasets = info.get("allowed_dataset_ids")
         scope = _("datasets {ids}").format(ids=", ".join(str(i) for i in datasets)) if datasets else _("all datasets")
-        status = _("Connected as '{user}', editor ({scope}). {labels} labels known, data schema {schema}.").format(
+        status = _("Connected as '{user}', editor ({scope}). {labels} labels known, BoneHub format {schema}.").format(
             user=info.get("user", "?"), scope=scope, labels=len(session.labels), schema=info.get("schema_version")
         )
         if info.get("data_access") == "segmentation":
@@ -302,122 +303,122 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             status += " " + _("The labels you correct and tick are accepted on your word, without another review.")
         self.setStatus(self.ui.connectionStatusLabel, status, ok=True)
         self.populateAddLabelComboBox()
-        self.ui.subjectCollapsibleButton.collapsed = False
+        self.ui.scanCollapsibleButton.collapsed = False
         self.updateGuiFromSession()
-        self.resumeSubjectInHand()
+        self.resumeScanInHand()
 
-    # -------------------------------------------------------------- subjects
-    def onSubjectButton(self):
-        """The one subject button: it reloads the subject in hand, or leases the next one. The
-        server hands an editor one subject at a time, so there is never a choice to make."""
-        if self.logic.session.has_subject:
-            self.onReloadSubject()
+    # -------------------------------------------------------------- scans
+    def onScanButton(self):
+        """The one scan button: it reloads the scan in hand, or leases the next one. The
+        server hands an editor one scan at a time, so there is never a choice to make."""
+        if self.logic.session.has_scan:
+            self.onReloadScan()
         else:
-            self.onNextSubject()
+            self.onNextScan()
 
-    def onNextSubject(self):
+    def onNextScan(self):
         self.applySettingsToSession()
         session = self.logic.session
         self.clearReview()
 
         try:
-            handout = self.runWithProgress(_("Asking the server for the next subject..."), session.next_subject)
+            handout = self.runWithProgress(_("Asking the server for the next scan..."), session.next_scan)
         except QCClientError as error:
             if error.status_code == 404:
                 slicer.util.infoDisplay(
-                    _("There is nothing for you to correct right now.\n\nA subject comes to the editors when a "
+                    _("There is nothing for you to correct right now.\n\nA scan comes to the editors when a "
                       "reviewer rejects one of its labels or reports a bone missing, or when it has no "
                       "segmentation yet. Try again later.\n\n{detail}").format(detail=str(error)),
                     windowTitle=_("Nothing to correct"),
                 )
             else:
-                slicer.util.errorDisplay(str(error), windowTitle=_("Could not lease a subject"))
+                slicer.util.errorDisplay(str(error), windowTitle=_("Could not lease a scan"))
             self.updateGuiFromSession()
             return
 
         self.downloadAndLoad(handout)
 
-    def onReloadSubject(self):
-        """Load the subject in hand again as the server has it, discarding the corrections not
+    def onReloadScan(self):
+        """Load the scan in hand again as the server has it, discarding the corrections not
         uploaded: to start a correction over, or after losing the scene."""
         session = self.logic.session
-        key = session.subject_key
+        key = session.scan_key
         if not slicer.util.confirmYesNoDisplay(
             _("Load {key} again as the server has it? Your corrections to it have not been uploaded, and "
               "they will be discarded.").format(key=key),
-            windowTitle=_("Reload subject"),
+            windowTitle=_("Reload scan"),
         ):
             return
         self.applySettingsToSession()
         try:
-            held = self.runWithProgress(_("Looking up your subject..."), session.open_assignments)
+            held = self.runWithProgress(_("Looking up your scan..."), session.open_assignments)
         except QCClientError as error:
-            slicer.util.errorDisplay(str(error), windowTitle=_("Could not reload the subject"))
+            slicer.util.errorDisplay(str(error), windowTitle=_("Could not reload the scan"))
             return
-        # The server still answers for a subject whose lease has ended, so check it is held.
+        # The server still answers for a scan whose lease has ended, so check it is held.
         assignment = next((a for a in held if a.get("assignment_id") == session.assignment_id), None)
         if assignment is None:
-            session.clear_subject()
+            session.clear_scan()
             self.clearReview()
             self.updateGuiFromSession()
             slicer.util.infoDisplay(
                 _("Your lease on {key} has ended, so it is no longer yours to correct. Use 'Get next "
-                  "subject'.").format(key=key),
+                  "scan'.").format(key=key),
                 windowTitle=_("Lease ended"),
             )
             return
         self.loadAssignment(assignment)
 
-    def resumeSubjectInHand(self):
-        """After connecting, load the subject this editor already holds, as after restarting
-        Slicer. A reconnect while a subject is loaded leaves it, and the corrections to it, as
+    def resumeScanInHand(self):
+        """After connecting, load the scan this editor already holds, as after restarting
+        Slicer. A reconnect while a scan is loaded leaves it, and the corrections to it, as
         they are."""
         session = self.logic.session
-        if session.has_subject:
+        if session.has_scan:
             return
         try:
-            held = self.runWithProgress(_("Looking up your subject..."), session.open_assignments)
+            held = self.runWithProgress(_("Looking up your scan..."), session.open_assignments)
         except QCClientError as error:
-            # Nothing is lost: 'Get next subject' hands the same subject back.
-            logging.warning("BoneHub quality check: could not look up the subject in hand: %s", error)
+            # Nothing is lost: 'Get next scan' hands the same scan back.
+            logging.warning("BoneHub quality check: could not look up the scan in hand: %s", error)
             return
         if not held:
             return
         self.loadAssignment(held[0])
-        if session.has_subject:
+        if session.has_scan:
             self.setStatus(
                 self.ui.connectionStatusLabel,
                 self.ui.connectionStatusLabel.text + " "
-                + _("You still hold {key}, so it is loaded again.").format(key=session.subject_key),
+                + _("You still hold {key}, so it is loaded again.").format(key=session.scan_key),
                 ok=True,
             )
 
     def loadAssignment(self, assignment):
-        """Fetch the handout of a subject this editor holds, then its files."""
+        """Fetch the handout of a scan this editor holds, then its files."""
         session = self.logic.session
         self.clearReview()
         try:
             handout = self.runWithProgress(
-                _("Fetching {key}...").format(key=assignment.get("subject_key", "")),
+                _("Fetching {key}...").format(key=assignment.get("scan_key", "")),
                 lambda: session.reload_assignment(assignment["assignment_id"]),
             )
         except QCClientError as error:
-            slicer.util.errorDisplay(str(error), windowTitle=_("Could not fetch the subject"))
+            slicer.util.errorDisplay(str(error), windowTitle=_("Could not fetch the scan"))
             self.updateGuiFromSession()
             return
         self.downloadAndLoad(handout)
 
     def downloadAndLoad(self, handout):
-        """Fetch the subject's files, then build the scene from them.
+        """Fetch the scan's files, then build the scene from them.
 
         Either file is enough. Without the segmentation, the editor paints one from scratch
         on the image; without the image, the segmentation is edited on its own voxel grid. A
-        subject that comes with neither is not loaded, and all that is left to do with it is
+        scan that comes with neither is not loaded, and all that is left to do with it is
         to reject it, which sends it to the administrator.
         """
         session = self.logic.session
-        key = handout.get("subject_key", "")
-        # Whatever happens next, the last subject's segmentation is not this one's, and must
+        key = handout.get("scan_key", "")
+        # Whatever happens next, the last scan's segmentation is not this one's, and must
         # not be what confirming this one uploads.
         self.clearReview()
         self.setStatus(self.ui.submitStatusLabel, "")
@@ -429,7 +430,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.updateGuiFromSession()
             slicer.util.warningDisplay(
                 _("The server sent neither the image nor the segmentation of {key}, so there is nothing here "
-                  "to work on.\n\nReject the subject: that sends it to the administrator, with the comment filled "
+                  "to work on.\n\nReject the scan: that sends it to the administrator, with the comment filled "
                   "in for you. Releasing it puts it back in the queue, and you may be given it again.").format(
                     key=key
                 ),
@@ -451,7 +452,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
-            self.logic.loadSubject(
+            self.logic.loadScan(
                 handout,
                 segmentationPath,
                 imagePath,
@@ -459,7 +460,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 distinctColours=self.ui.distinctColoursCheckBox.checked,
             )
         except Exception as error:
-            slicer.util.errorDisplay(str(error), windowTitle=_("Could not load the subject"))
+            slicer.util.errorDisplay(str(error), windowTitle=_("Could not load the scan"))
         finally:
             slicer.app.restoreOverrideCursor()
 
@@ -475,7 +476,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             slicer.util.warningDisplay(
                 _("The server reports a problem with the segmentation of {key}:\n\n{issue}\n\nWithout the "
                   "image, 3D Slicer can only write the segmentation back on its own voxel grid, so the server "
-                  "will refuse your upload. Reject the subject with a comment instead, which sends it to the "
+                  "will refuse your upload. Reject the scan with a comment instead, which sends it to the "
                   "administrator.").format(key=key, issue=issue),
                 windowTitle=_("Segmentation off the image's grid"),
             )
@@ -488,7 +489,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             slicer.util.warningDisplay(
                 _("The server has a segmentation of {key}, but this account is not sent segmentations. The "
                   "server will not let you replace a segmentation you have not seen, so it will refuse your "
-                  "upload. Reject the subject with a comment instead, which sends it to the "
+                  "upload. Reject the scan with a comment instead, which sends it to the "
                   "administrator.").format(key=key),
                 windowTitle=_("Segmentation not sent"),
             )
@@ -500,29 +501,29 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not extend the lease"))
         self.updateGuiFromSession()
 
-    def onReleaseSubject(self):
+    def onReleaseScan(self):
         if not slicer.util.confirmYesNoDisplay(
-            _("Give {key} back without uploading anything? Your corrections are lost, and the subject goes "
-              "back to the queue for an editor.").format(key=self.logic.session.subject_key),
-            windowTitle=_("Release subject"),
+            _("Give {key} back without uploading anything? Your corrections are lost, and the scan goes "
+              "back to the queue for an editor.").format(key=self.logic.session.scan_key),
+            windowTitle=_("Release scan"),
         ):
             return
         try:
-            self.runWithProgress(_("Releasing the subject..."), self.logic.session.release_subject)
+            self.runWithProgress(_("Releasing the scan..."), self.logic.session.release_scan)
         except QCClientError as error:
-            slicer.util.errorDisplay(str(error), windowTitle=_("Could not release the subject"))
+            slicer.util.errorDisplay(str(error), windowTitle=_("Could not release the scan"))
             return
-        self.finishSubject(_("Subject released. It is back in the queue, waiting for an editor."), ok=True)
+        self.finishScan(_("Scan released. It is back in the queue, waiting for an editor."), ok=True)
 
     def clearReview(self):
-        """Empty the scene and the panel of the last subject.
+        """Empty the scene and the panel of the last scan.
 
-        Called before the server is asked for another subject, as well as before one is
-        loaded: by then the session has let go of the last subject, so a failed request must
+        Called before the server is asked for another scan, as well as before one is
+        loaded: by then the session has let go of the last scan, so a failed request must
         not leave it on screen either.
         """
         self.logic.clearScene()
-        self.ui.labelsTableWidget.setRowCount(0)  # so the new subject does not inherit ticks
+        self.ui.labelsTableWidget.setRowCount(0)  # so the new scan does not inherit ticks
         self.ui.commentTextEdit.plainText = ""
 
     # ---------------------------------------------------------------- review
@@ -542,8 +543,8 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.updateLabelsTable()
 
     def updateLabelsTable(self):
-        """Show every label of this subject: what the quality check has made of it, what the
-        dataset says, and what is in the scene.
+        """Show every label of this scan: what the quality check has made of it, its origin in
+        scan.json, and what is in the scene.
 
         The labels a reviewer rejected or reported missing stand out. A label in the
         segmentation has a tick box only when a tick counts, which is when the server takes
@@ -555,13 +556,13 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         ticks = not session.edits_need_review
         # A label already in the table keeps whatever the editor did with it; a label that
         # has just appeared -- one they added and painted -- starts ticked, like the labels
-        # the subject arrived with.
+        # the scan arrived with.
         previouslyChecked = self.checkedLabels() if table.rowCount else None
         previouslyListed = self._checkableLabels() if table.rowCount else set()
 
         inSegmentation = self.logic.segmentLabelValues()
         colours = self.logic.segmentColours()
-        inDataset = dict(session.handout.get("segmentation_labels") or {})
+        origins = dict(session.handout.get("segmentation_labels") or {})
         inCase = _caseLabels(session.handout)
         darkTheme = table.palette.color(qt.QPalette.Base).lightness() < 128
 
@@ -571,7 +572,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 value = session.labels.value_of(name)
             return (value is None, value or 0, name)
 
-        names = sorted(set(inDataset) | set(inCase) | set(inSegmentation), key=sortKey)
+        names = sorted(set(origins) | set(inCase) | set(inSegmentation), key=sortKey)
         table.setRowCount(len(names))
         for row, name in enumerate(names):
             present = name in inSegmentation
@@ -596,13 +597,12 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             stateItem = _readOnlyItem(text)
             stateItem.setToolTip(tip)
             table.setItem(row, 1, stateItem)
-            if name in inDataset:
-                datasetItem = _readOnlyItem(status_text(inDataset[name]))
-                datasetItem.setToolTip(session.labels.describe(inDataset[name]))
-            else:
-                datasetItem = _readOnlyItem(_("not listed"))
-                datasetItem.setToolTip(_("Subject_info does not mention this label yet."))
-            table.setItem(row, 2, datasetItem)
+            originText, originTip = _labelOrigin(
+                origins.get(name), (inCase.get(name) or {}).get("reviewed"), session.labels
+            )
+            originItem = _readOnlyItem(originText)
+            originItem.setToolTip(originTip)
+            table.setItem(row, 2, originItem)
             table.setItem(row, 3, _readOnlyItem(_("yes") if present else _("no")))
 
             if flag:
@@ -716,7 +716,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
     def onShow3DToggled(self, shown):
         """Build the 3D models of the segmentation the server sent, or take them away. The tick
-        is remembered, and a subject loaded later comes with its models or without."""
+        is remembered, and a scan loaded later comes with its models or without."""
         if not self.segmentationSent():
             return
         try:
@@ -729,7 +729,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
     def onDistinctColoursToggled(self, shown):
         """Give each bone a colour of its own, or its BoneHub colour again, in the views, the
-        Segment Editor and the labels table alike. The tick is remembered, and a subject loaded
+        Segment Editor and the labels table alike. The tick is remembered, and a scan loaded
         later comes coloured one way or the other."""
         self.logic.showDistinctColours(shown)
         self.updateLabelsTable()
@@ -744,7 +744,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
-            written = self.logic.exportReviewedSegmentation(session.reviewed_path())
+            written = self.logic.exportCorrectedSegmentation(session.corrected_path())
         except Exception as error:
             slicer.util.errorDisplay(str(error), windowTitle=_("Could not write your correction"))
             return
@@ -764,7 +764,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if not slicer.util.confirmYesNoDisplay(self.uploadQuestion(written, vouched), windowTitle=_("Upload correction")):
             return
 
-        path = session.reviewed_path()
+        path = session.corrected_path()
         comment = self.ui.commentTextEdit.plainText
 
         # With no tick boxes, nothing is vouched for: should the server start taking an
@@ -776,14 +776,14 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             result = self.runWithProgress(_("Uploading your correction..."), upload)
         except QCClientError as error:
             slicer.util.errorDisplay(
-                _("The server refused the upload, so you are still holding the subject:\n\n{detail}").format(
+                _("The server refused the upload, so you are still holding the scan:\n\n{detail}").format(
                     detail=str(error)
                 ),
                 windowTitle=_("Upload refused"),
             )
             return
 
-        self.finishSubject(_submissionSummary(result), ok=True, result=result)
+        self.finishScan(_submissionSummary(result), ok=True, result=result)
 
     def uploadQuestion(self, written, vouched):
         """What uploading ``written``, vouching for ``vouched``, will do, asked before it is done.
@@ -801,8 +801,8 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         empty = [name for name in self.logic.segmentLabelValues() if name not in written and name not in inCase]
 
         paragraphs = [
-            _("Upload your correction of {key}?").format(key=session.subject_key),
-            _("It waits on the server: nothing reaches the dataset before the administrator approves the subject."),
+            _("Upload your correction of {key}?").format(key=session.scan_key),
+            _("It waits on the server: nothing reaches the dataset before the administrator approves the scan."),
         ]
         if session.edits_need_review:
             paragraphs.append(_("The labels you changed or added, and those a reviewer rejected, go back to a "
@@ -834,15 +834,15 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         comment = self.ui.commentTextEdit.plainText.strip()
         if not comment and not slicer.util.confirmYesNoDisplay(
             _("Send {key} to the administrator without a comment? The comment is what tells them why you "
-              "could not correct it.").format(key=session.subject_key),
+              "could not correct it.").format(key=session.scan_key),
             windowTitle=_("No comment"),
         ):
             self.ui.commentTextEdit.setFocus()
             return
         if not slicer.util.confirmYesNoDisplay(
             _("Reject {key}? It goes to the administrator with your comment, and they decide what becomes of "
-              "it. Nothing in the dataset changes.").format(key=session.subject_key),
-            windowTitle=_("Reject subject"),
+              "it. Nothing in the dataset changes.").format(key=session.scan_key),
+            windowTitle=_("Reject scan"),
         ):
             return
 
@@ -850,14 +850,14 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             return session.submit(False, comment=comment)
 
         try:
-            result = self.runWithProgress(_("Sending the subject to the administrator..."), upload)
+            result = self.runWithProgress(_("Sending the scan to the administrator..."), upload)
         except QCClientError as error:
             slicer.util.errorDisplay(str(error), windowTitle=_("Rejection refused"))
             return
 
-        self.finishSubject(_submissionSummary(result), ok=True, result=result)
+        self.finishScan(_submissionSummary(result), ok=True, result=result)
 
-    def finishSubject(self, message, ok=True, result=None):
+    def finishScan(self, message, ok=True, result=None):
         """Common tail of submitting, rejecting and releasing."""
         session = self.logic.session
         if not self.ui.keepFilesCheckBox.checked:
@@ -868,7 +868,7 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.setStatus(self.ui.submitStatusLabel, message, ok=ok)
         self.updateGuiFromSession()
         if self.ui.autoNextCheckBox.checked and session.connected:
-            self.onNextSubject()
+            self.onNextScan()
 
     # ------------------------------------------------------------------- misc
     def onOpenWorkspace(self):
@@ -896,8 +896,8 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         )
         dialog.setCancelButton(None)
         # Slicer's progress dialog is not modal, so the events processed below would let the
-        # editor press 'Get next subject' again mid-download and load a second subject over
-        # the first, the scene holding one subject's files while the session holds the other.
+        # editor press 'Get next scan' again mid-download and load a second scan over
+        # the first, the scene holding one scan's files while the session holds the other.
         dialog.setWindowModality(qt.Qt.ApplicationModal)
         dialog.show()
         thread = threading.Thread(target=runner, daemon=True)
@@ -924,12 +924,12 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     def updateGuiFromSession(self):
         session = self.logic.session
         connected = session.connected
-        holding = session.has_subject
-        # A subject in hand with no segmentation in the scene, not even an empty one to paint,
+        holding = session.has_scan
+        # A scan in hand with no segmentation in the scene, not even an empty one to paint,
         # can only be rejected.
         loaded = holding and self.logic.segmentationNode is not None
 
-        self.ui.subjectCollapsibleButton.enabled = connected
+        self.ui.scanCollapsibleButton.enabled = connected
         self.ui.reviewCollapsibleButton.enabled = loaded
         self.ui.submitCollapsibleButton.enabled = holding
         self.ui.confirmButton.enabled = loaded
@@ -937,19 +937,19 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Editor's Show 3D button is there for it once there is something painted.
         self.ui.show3DCheckBox.enabled = holding and self.segmentationSent()
         self.ui.distinctColoursCheckBox.enabled = loaded
-        # One subject at a time: the button says what it does with the one in hand, if any.
-        self.ui.subjectButton.enabled = connected
+        # One scan at a time: the button says what it does with the one in hand, if any.
+        self.ui.scanButton.enabled = connected
         if holding:
-            self.ui.subjectButton.text = _("Reload subject from server")
-            self.ui.subjectButton.toolTip = _(
-                "Load the subject again as the server has it, discarding the corrections you have not uploaded. "
+            self.ui.scanButton.text = _("Reload scan from server")
+            self.ui.scanButton.toolTip = _(
+                "Load the scan again as the server has it, discarding the corrections you have not uploaded. "
                 "To move on, upload, reject or release it."
             )
         else:
-            self.ui.subjectButton.text = _("Get next subject")
-            self.ui.subjectButton.toolTip = _("Lease the next subject waiting for an editor and load it into the scene.")
+            self.ui.scanButton.text = _("Get next scan")
+            self.ui.scanButton.toolTip = _("Lease the next scan waiting for an editor and load it into the scene.")
         self.ui.extendLeaseButton.enabled = holding
-        self.ui.releaseSubjectButton.enabled = holding
+        self.ui.releaseScanButton.enabled = holding
         self.ui.connectButton.text = _("Reconnect") if connected else _("Connect")
         # Ticks count only when the server takes an editor's word for a correction.
         ticks = not session.edits_need_review
@@ -959,37 +959,37 @@ class BoneHubQualityCheckWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.confirmButton.toolTip = _(
                 "Upload your corrected segmentation. It waits on the server: of the labels you changed or added, "
                 "and those a reviewer rejected, the ticked ones are accepted and the others go back to a reviewer. "
-                "Nothing reaches the dataset before the administrator approves the subject."
+                "Nothing reaches the dataset before the administrator approves the scan."
             )
         else:
             self.ui.confirmButton.toolTip = _(
                 "Upload your corrected segmentation. It waits on the server: the labels you changed or added, and "
                 "those a reviewer rejected, go back to a reviewer. Nothing reaches the dataset before the "
-                "administrator approves the subject."
+                "administrator approves the scan."
             )
 
         if holding:
             handout = session.handout
-            text = _("{key}  (dataset {dataset}, subject {subject})").format(
-                key=handout.get("subject_key", ""),
-                dataset=handout.get("dataset_id", ""),
-                subject=handout.get("subject_id", ""),
-            )
+            # The key names the dataset, subject and scan already; the dataset's name says what it is.
+            text = handout.get("scan_key", "")
+            datasetName = (handout.get("dataset_info") or {}).get("name")
+            if datasetName:
+                text += "  ({name})".format(name=datasetName)
             if not handout.get("has_segmentation") and not handout.get("has_image"):
                 text += "\n" + _("Neither the image nor the segmentation was sent: nothing to work on.")
             elif not handout.get("has_segmentation"):
                 text += "\n" + _("Image only: no segmentation was sent, so add the labels and paint them.")
             elif not handout.get("has_image"):
                 text += "\n" + _("Segmentation only: no image was sent.")
-            self.ui.subjectKeyLabel.text = text
+            self.ui.scanKeyLabel.text = text
             self.ui.expiresLabel.text = _("Lease expires at {when}").format(when=_when(handout.get("expires_at", "?")))
             self.ui.caseTextBrowser.html = _caseHtml(handout, session.user_name)
-            self.ui.subjectInfoTextBrowser.html = _subjectInfoHtml(handout)
+            self.ui.scanInfoTextBrowser.html = _scanInfoHtml(handout)
         else:
-            self.ui.subjectKeyLabel.text = _("No subject in hand.")
+            self.ui.scanKeyLabel.text = _("No scan in hand.")
             self.ui.expiresLabel.text = ""
             self.ui.caseTextBrowser.html = ""
-            self.ui.subjectInfoTextBrowser.html = ""
+            self.ui.scanInfoTextBrowser.html = ""
 
         self.updateLabelsTable()
 
@@ -1005,7 +1005,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         ScriptedLoadableModuleLogic.__init__(self)
         self.session = BoneHubQCSession()
-        #: The subject's image, or None when the server did not send one.
+        #: The scan's image, or None when the server did not send one.
         self.imageVolumeNode = None
         #: The volume whose voxel grid the segmentation is edited and written on: the image,
         #: or without it a blank volume on the segmentation's own grid.
@@ -1018,11 +1018,11 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
 
     # ------------------------------------------------------------------ scene
     def clearScene(self):
-        """Close the scene, so that every subject starts from an empty one.
+        """Close the scene, so that every scan starts from an empty one.
 
         Everything goes, not only the nodes loaded here: markups the editor placed, a volume
         rendering's ROI, or a node a failed load lost track of would otherwise stay under the
-        next subject and pass for part of it.
+        next scan and pass for part of it.
         """
         slicer.mrmlScene.Clear(0)
         self.imageVolumeNode = None
@@ -1031,8 +1031,8 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         self.coloursBeforeDistinct = {}
         self.nextDistinctColour = 0
 
-    def loadSubject(self, handout, segmentationPath=None, imagePath=None, show3D=False, distinctColours=False):
-        """Load what was sent of one subject: its BoneHub segmentation, one segment per label,
+    def loadScan(self, handout, segmentationPath=None, imagePath=None, show3D=False, distinctColours=False):
+        """Load what was sent of one scan: its BoneHub segmentation, one segment per label,
         its image, or both.
 
         Either is enough. Without the segmentation, an empty one is made on the image for the
@@ -1043,22 +1043,22 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         in a colour of its own rather than its BoneHub one.
         """
         self.clearScene()
-        subjectKey = handout.get("subject_key", "subject")
+        scanKey = handout.get("scan_key", "scan")
         if segmentationPath is None and imagePath is None:
-            raise RuntimeError(f"Neither the image nor the segmentation of {subjectKey} was sent; nothing to load.")
+            raise RuntimeError(f"Neither the image nor the segmentation of {scanKey} was sent; nothing to load.")
 
         try:
             if segmentationPath is not None:
-                self.segmentationNode = self.importSegmentation(segmentationPath, subjectKey)
+                self.segmentationNode = self.importSegmentation(segmentationPath, scanKey)
             else:
-                self.segmentationNode = self.createEmptySegmentation(f"{subjectKey}_segmentation")
+                self.segmentationNode = self.createEmptySegmentation(f"{scanKey}_segmentation")
             if imagePath is not None:
-                self.imageVolumeNode = slicer.util.loadVolume(str(imagePath), {"name": subjectKey, "show": False})
+                self.imageVolumeNode = slicer.util.loadVolume(str(imagePath), {"name": scanKey, "show": False})
                 self.referenceVolumeNode = self.imageVolumeNode
             else:
-                self.referenceVolumeNode = self.createBlankVolume(segmentationPath, f"{subjectKey} (no image)")
+                self.referenceVolumeNode = self.createBlankVolume(segmentationPath, f"{scanKey} (no image)")
         except Exception:
-            self.clearScene()  # half a subject in the scene would pass for a whole one
+            self.clearScene()  # half a scan in the scene would pass for a whole one
             raise
 
         self.segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(self.referenceVolumeNode)
@@ -1101,7 +1101,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         threeDViews = [layoutManager.threeDWidget(index).mrmlViewNode() for index in range(layoutManager.threeDViewCount)]
         if not any(viewNode.IsMappedInLayout() for viewNode in threeDViews):
             layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutConventionalView)
-        # The camera is wherever the last subject left it: frame the bones, seen from the front.
+        # The camera is wherever the last scan left it: frame the bones, seen from the front.
         layoutManager.resetThreeDViews()
 
     def segmentationShownIn3D(self):
@@ -1211,18 +1211,18 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
             slicer.mrmlScene, center[0], center[1], center[2], slicer.vtkMRMLSliceNode.CenteredJumpSlice
         )
 
-    def importSegmentation(self, segmentationPath, subjectKey):
+    def importSegmentation(self, segmentationPath, scanKey):
         """Read a BoneHub segmentation file (``.seg.nrrd``), which Slicer opens natively.
 
         The file header names each segment after its label and gives it its colour.
         """
-        segmentationNode = slicer.util.loadSegmentation(str(segmentationPath), {"name": f"{subjectKey}_segmentation"})
+        segmentationNode = slicer.util.loadSegmentation(str(segmentationPath), {"name": f"{scanKey}_segmentation"})
         if segmentationNode is None:
             raise RuntimeError(f"'{segmentationPath}' could not be loaded as a segmentation.")
         return segmentationNode
 
     def createEmptySegmentation(self, name):
-        """A segmentation with no segments, for a subject sent without one: the editor adds
+        """A segmentation with no segments, for a scan sent without one: the editor adds
         each label with ``addEmptySegment`` and paints it."""
         segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", name)
         segmentationNode.CreateDefaultDisplayNodes()
@@ -1265,7 +1265,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
     def addEmptySegment(self, labelName):
         """Add an empty segment for a BoneHub label, ready to be painted."""
         if self.segmentationNode is None:
-            raise RuntimeError("No subject is loaded.")
+            raise RuntimeError("No scan is loaded.")
         value = self.session.labels.value_of(labelName)
         if value is None:
             raise RuntimeError(
@@ -1278,7 +1278,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         return segmentation.AddEmptySegment(labelName, labelName, [red, green, blue])
 
     # ------------------------------------------------------------ the upload
-    def exportReviewedSegmentation(self, path):
+    def exportCorrectedSegmentation(self, path):
         """Write the segmentation as a BoneHub ``.seg.nrrd`` on the reference volume's voxel grid.
 
         That is the image's grid, or without the image the grid the segmentation arrived on.
@@ -1289,7 +1289,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
         dependent on segment order.
         """
         if self.segmentationNode is None or self.referenceVolumeNode is None:
-            raise RuntimeError("No subject is loaded.")
+            raise RuntimeError("No scan is loaded.")
 
         values = self.segmentLabelValues()
         unknown = sorted(name for name, value in values.items() if value is None)
@@ -1316,7 +1316,7 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
             if mask is None or mask.size == 0:
                 continue
             if mask.shape != shape:
-                raise RuntimeError(f"Segment '{name}' could not be brought onto the subject's voxel grid.")
+                raise RuntimeError(f"Segment '{name}' could not be brought onto the scan's voxel grid.")
             numbers[mask > 0] = numberOf[values[name]]
 
         if not numbers.any():
@@ -1330,13 +1330,13 @@ class BoneHubQualityCheckLogic(ScriptedLoadableModuleLogic):
 
     # ---------------------------------------------------------------- editing
     def openSegmentEditor(self):
-        """Switch to the Segment Editor with this subject's nodes already selected.
+        """Switch to the Segment Editor with this scan's nodes already selected.
 
         Without the image, the blank stand-in is the source volume: painting, erasing and the
         other tools that do not follow image intensity all work on it.
         """
         if self.segmentationNode is None or self.referenceVolumeNode is None:
-            raise RuntimeError("No subject is loaded.")
+            raise RuntimeError("No scan is loaded.")
         slicer.util.selectModule("SegmentEditor")
         editor = slicer.modules.segmenteditor.widgetRepresentation().self().editor
         editor.setSegmentationNode(self.segmentationNode)
@@ -1374,7 +1374,7 @@ def _readOnlyItem(text):
 
 
 #: How the labels a reviewer sent back stand out: rejected ones in red, missing ones in amber.
-#: The labels table tints their rows, translucent; the Subject section writes them in colour.
+#: The labels table tints their rows, translucent; the Scan section writes them in colour.
 _FLAG_COLOURS = {"rejected": (178, 34, 34), "missing": (180, 83, 9)}
 
 
@@ -1388,7 +1388,7 @@ def _labelTextColour(colour, darkTheme):
 
 
 def _caseLabels(handout):
-    """``{name: label}`` of the subject's labels, each with what the quality check has made of it."""
+    """``{name: label}`` of the scan's labels, each with what the quality check has made of it."""
     return {label["name"]: label for label in handout.get("labels") or []}
 
 
@@ -1443,7 +1443,7 @@ def _labelState(label, present):
         if present:
             return _("added"), _("Not in the segmentation you were sent: you added it. Uploaded, it counts as "
                                  "corrected."), None
-        return "", _("Not part of this subject's quality check."), None
+        return "", _("Not part of this scan's quality check."), None
 
     state, by, editor = label.get("state"), label.get("by"), label.get("edited_by")
     who = " ({by})".format(by=by) if by else ""
@@ -1476,12 +1476,34 @@ def _labelState(label, present):
             return _("to review"), _("Waits for a reviewer: {editor} corrected it.").format(editor=editor), None
         return _("to review"), _("Waits for a reviewer: nobody has reviewed it yet."), None
     if state == "kept":
-        return _("kept"), _("Not under review: the dataset has it as reviewed already. If you change it, it counts "
-                            "as corrected."), None
+        if label.get("reviewed"):
+            why = _("Not under review: it has been reviewed on this database already, and its segmentation is "
+                    "unchanged since.")
+        else:
+            why = _("Not under review: the server does not review labels of its origin.")
+        return _("kept"), why + " " + _("If you change it, it counts as corrected."), None
     if state == "removed":
         return _("removed") + who, _("Not in the segmentation, and nobody needs to look at it again. Add it if the "
                                      "bone should be segmented."), None
     return str(state), "", None
+
+
+def _labelOrigin(origin, reviewed, labels):
+    """A label's origin in scan.json for the labels table: its kind -- source, manual, model or
+    derived -- and whether it has been reviewed, in a few words, and the whole origin with what
+    it means for the tooltip.
+
+    ``origin`` is None for a label scan.json does not list; ``labels`` is the session's LabelMap,
+    which holds the server's wording for each kind of origin.
+    """
+    if not origin:
+        return _("not listed"), _("scan.json does not list this label, so it has no origin yet. Approving the "
+                                  "scan records a label you drew as manual.")
+    text, tip = origin_kind(origin), labels.describe_origin(origin) + "."
+    if reviewed:
+        text = _("{origin} · reviewed").format(origin=text)
+        tip += " " + _("Reviewed on this database already, and its segmentation unchanged since.")
+    return text, tip
 
 
 def _when(timestamp):
@@ -1497,12 +1519,9 @@ def _when(timestamp):
 
 
 def _requestText(request):
-    """An open request for an editor about no single label: the administrator's, or a
-    reviewer's rejection of the subject as a whole."""
-    if request.get("role") == "admin":
-        text = _("The administrator sent it back to the editors")
-    else:
-        text = _("{by} rejected the subject as a whole").format(by=request.get("by") or _("A reviewer"))
+    """An open request for an editor about no single label, which is the administrator's: they
+    sent the scan back to the editors."""
+    text = _("The administrator sent it back to the editors")
     comment = request.get("comment")
     return text + (': "{comment}"'.format(comment=comment) if comment else ".")
 
@@ -1515,7 +1534,7 @@ def _eventWho(event):
 
 
 def _eventText(event):
-    """What one step of a subject's quality check did, in words."""
+    """What one step of a scan's quality check did, in words."""
     details = event.get("details") or {}
     action = event.get("action")
     if action == "review":
@@ -1527,6 +1546,8 @@ def _eventText(event):
         if details.get("missing"):
             parts.append(_("reported missing {names}").format(names=", ".join(details["missing"])))
         return "; ".join(parts) or _("reviewed it")
+    if action == "reject":
+        return _("rejected the scan as a whole")
     if action == "edit":
         parts = []
         if details.get("edited"):
@@ -1560,12 +1581,12 @@ def _stagedNote(handout, user):
             editor=edits[-1].get("by"), when=_when(edits[-1].get("at"))
         )
     return text + " " + _("It waits on the server and is not in the dataset yet: the dataset keeps its own "
-                          "segmentation until the administrator approves the subject.")
+                          "segmentation until the administrator approves the scan.")
 
 
 def _caseHtml(handout, user):
-    """Why the subject came to the editor, where the segmentation they were sent comes from,
-    and the subject's quality check so far with its comments, as HTML for the Subject section."""
+    """Why the scan came to the editor, where the segmentation they were sent comes from,
+    and the scan's quality check so far with its comments, as HTML for the Scan section."""
     caseLabels = _caseLabels(handout)
     why = []
     for name in _rejectedLabels(handout):
@@ -1632,20 +1653,29 @@ def _toBool(value):
     return bool(value)
 
 
-def _subjectInfoHtml(handout):
-    """The subject's metadata as a small table, without the per-label dictionaries."""
-    subject = dict(handout.get("subject_info") or {})
-    for key in ("segmentation", "mesh", "nurbs"):
-        subject.pop(key, None)
-    dataset = handout.get("dataset_info") or {}
-    if dataset.get("name"):
-        subject["dataset"] = dataset["name"]
+def _scanInfoHtml(handout):
+    """What the database says of the scan, as a small table: its dataset's name, its subject's
+    subject.json and its own scan.json.
 
-    rows = "".join(
-        f"<tr><td><b>{_escape(str(key))}</b></td><td>{_escape(str(value))}</td></tr>"
-        for key, value in subject.items()
-    )
-    return f"<table cellspacing='4'>{rows}</table>" if rows else ""
+    The blocks of labels and their origins in scan.json -- segmentation, mesh, nurbs, and any
+    kind a later minor version of the format adds -- are left out: the labels table shows them.
+    """
+
+    def row(key, value):
+        return f"<tr><td><b>{_escape(str(key))}</b></td><td>{_escape(str(value))}</td></tr>"
+
+    rows = []
+    name = (handout.get("dataset_info") or {}).get("name")
+    if name:
+        rows.append(row("dataset", name))
+    for title, fields in ((_("Subject"), handout.get("subject_info")), (_("Scan"), handout.get("scan_info"))):
+        fields = {
+            key: value for key, value in (fields or {}).items() if value is not None and not isinstance(value, dict)
+        }
+        if fields:
+            rows.append(f"<tr><td colspan='2'><i>{_escape(title)}</i></td></tr>")
+            rows.extend(row(key, value) for key, value in fields.items())
+    return f"<table cellspacing='4'>{''.join(rows)}</table>" if rows else ""
 
 
 def _escape(text):
@@ -1661,39 +1691,42 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
     """Self-test, runnable from the Reload and Test section and from ctest.
 
     It exercises the parts that do not need a server: the label map, what the session
-    accepts of the server, how the quality check of a subject is put into words, and the round
+    accepts of the server, how the quality check of a scan is put into words, and the round
     trip of a segmentation through the scene -- loaded from a BoneHub ``.seg.nrrd``, with or
     without its image, or painted from scratch on the image, edited, and written back --
     which is where the dataset could silently be corrupted.
     """
 
-    #: Labels of BoneHub data schema 0.3, with their values.
+    #: Labels of version 1 of the BoneHub format, with their values.
     LABELS = {"SKULL": 100000000, "FEMUR_LEFT": 710000001, "FEMUR_RIGHT": 710000002}
 
-    #: What a quality-check server of version 0.4 answers an editor's ``GET /api/v1/ping``.
+    #: The key of the scan :meth:`_buildScan` builds, and of another.
+    SCAN_KEY = "ds-0001/sub-000001/scan-01"
+    OTHER_SCAN_KEY = "ds-0001/sub-000002/scan-01"
+
+    #: What a quality-check server of version 1.0 answers an editor's ``GET /api/v1/ping``.
     PING = {
         "status": "ok",
         "server": "qc-server",
-        "server_version": "0.4.0",
-        "schema_version": "0.3.0",
+        "server_version": "1.0.0",
+        "schema_version": "1.0",
         "user": "eddie",
         "role": "editor",
         "roles": ["editor"],
         "allowed_dataset_ids": None,
         "data_access": "image_and_segmentation",
         "edits_need_review": True,
-        "mark_removed_labels_absent": True,
         "lease_ttl_seconds": 86400,
     }
 
     #: ... and its ``GET /api/v1/labels``, with the labels of :data:`LABELS`.
     LABELS_PAYLOAD = {
-        "schema_version": "0.3.0",
+        "schema_version": "1.0",
         "label_name_to_value": dict(LABELS),
-        "label_status_values": {
-            "0": "not available",
-            "1": "available, not reviewed or corrected",
-            "2": "available, reviewed and corrected (if necessary)",
+        "label_origins": dict(ORIGIN_KINDS),
+        "review_states": {
+            "not_reviewed": "no server on this database has reviewed it",
+            "reviewed": "a server on this database has reviewed it, and its segmentation is unchanged since",
         },
         "segmentation_suffix": ".seg.nrrd",
     }
@@ -1706,25 +1739,26 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self.test_LabelColoursFollowTheDataset()
         self.test_LabelMapReadsTheServerPayload()
         self.test_EveryAccountCanConnectWhateverItIsSent()
-        self.test_OnlyAServerOfVersion04IsAccepted()
+        self.test_OnlyAServerOfVersion1IsAccepted()
+        self.test_TheWorkingFolderIsTheScansPath()
         self.test_TheQualityCheckIsPutIntoWords()
         self.test_SegmentationSurvivesTheRoundTrip()
         self.test_RenamingASegmentRelabelsIt()
         self.test_TagsInTheFileNameTheSegments()
         self.test_AMissingBoneCanBeAdded()
         self.test_ASegmentationIsEditedWithoutItsImage()
-        self.test_ASubjectIsSegmentedFromScratchOnItsImage()
+        self.test_AScanIsSegmentedFromScratchOnItsImage()
         self.test_TheSegmentationSentCanBeShownIn3D()
         self.test_EachBoneCanBeDrawnInAColourOfItsOwn()
-        self.test_ASubjectNeedsItsImageOrItsSegmentation()
-        self.test_ANewSubjectStartsFromAnEmptyScene()
+        self.test_AScanNeedsItsImageOrItsSegmentation()
+        self.test_ANewScanStartsFromAnEmptyScene()
         self.test_UnknownSegmentsAreRefused()
 
     # ------------------------------------------------------------------ tests
     def test_LabelColoursFollowTheDataset(self):
-        """A segment added here must look like the same label loaded from a dataset file."""
+        """A segment added here must look like the same label loaded from a database file."""
         self.delayDisplay("Label colours")
-        # The colours bonehub_data_schema writes into the files, for two labels.
+        # The colours bonehub_format writes into the files, for two labels.
         for value, expected in ((100000000, (0.609, 0.4578, 0.231)), (710000001, (0.28392, 0.1932, 0.6468))):
             for actual, wanted in zip(label_color(value), expected):
                 self.assertAlmostEqual(actual, wanted, places=5)
@@ -1737,9 +1771,9 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self.delayDisplay("Label map")
         labelMap = LabelMap.from_payload(
             {
-                "schema_version": "0.3.0",
+                "schema_version": "1.0",
                 "label_name_to_value": {"FEMUR_LEFT": 710000001, "SKULL": 100000000, "BACKGROUND": 0},
-                "label_status_values": {"1": "not reviewed yet", "2": "reviewed"},
+                "label_origins": {"model": "segmented by a model"},
             }
         )
         self.assertEqual(labelMap.value_of("FEMUR_LEFT"), 710000001)
@@ -1747,16 +1781,29 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self.assertIsNone(labelMap.value_of("NOT_A_BONE"))
         self.assertIsNone(labelMap.value_of("BACKGROUND"), "background is never a segment")
         self.assertEqual(labelMap.sorted_names(), ["SKULL", "FEMUR_LEFT"])
-        # The short form is what the table shows; the server's own wording is the tooltip.
-        self.assertEqual(status_text(2), "2 reviewed")
-        self.assertEqual(status_text(1), "1 unreviewed")
-        self.assertIn("not reviewed", status_text(1, short=False))
-        self.assertEqual(labelMap.describe(1), "not reviewed yet")
-        self.assertEqual(labelMap.describe(0), LABEL_STATUS_VALUES[0])
-        # A server of another schema would hand out masks this extension cannot read.
-        self.assertTrue(schema_is_supported("0.3.0"))
-        self.assertFalse(schema_is_supported("0.2.0"))
-        self.assertFalse(schema_is_supported(None), "servers before schema 0.3 report none")
+        # The kind of an origin is what the table shows; the whole origin, in the server's
+        # words, is the tooltip.
+        self.assertEqual(origin_kind("model:TotalSegmentator@2.4.0"), "model")
+        self.assertEqual(origin_kind("source"), "source")
+        self.assertEqual(
+            labelMap.describe_origin("model:TotalSegmentator@2.4.0"), "model:TotalSegmentator@2.4.0: segmented by a model"
+        )
+        self.assertEqual(labelMap.describe_origin("source"), "source: " + ORIGIN_KINDS["source"], "the fallback")
+        self.assertEqual(
+            _labelOrigin("derived:bonehub-mesher@1.0", False, labelMap),
+            ("derived", "derived:bonehub-mesher@1.0: " + ORIGIN_KINDS["derived"] + "."),
+        )
+        text, tip = _labelOrigin("source", True, labelMap)
+        self.assertEqual(text, "source · reviewed")
+        self.assertIn("Reviewed on this database already", tip)
+        self.assertEqual(_labelOrigin(None, False, labelMap)[0], "not listed")
+        # A server of another major version of the format would hand out masks this extension
+        # cannot read; a minor version only adds to the format.
+        self.assertTrue(schema_is_supported("1.0"))
+        self.assertTrue(schema_is_supported("1.2"))
+        self.assertFalse(schema_is_supported("0.3.0"))
+        self.assertFalse(schema_is_supported("2.0"))
+        self.assertFalse(schema_is_supported(None))
 
     def test_EveryAccountCanConnectWhateverItIsSent(self):
         """The image, the segmentation, or both: an editor can work with any of them."""
@@ -1766,21 +1813,55 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             self.assertTrue(session.connected, f"an account sent '{access}' can edit")
             self.assertEqual(session.labels.value_of("FEMUR_LEFT"), 710000001)
 
-    def test_OnlyAServerOfVersion04IsAccepted(self):
-        """The panel promises that a correction waits on the server until the administrator
-        approves it, and that the labels it corrects go back to a reviewer or are accepted as
-        the server says. Only a server of version 0.4 keeps those promises."""
+    def test_OnlyAServerOfVersion1IsAccepted(self):
+        """The panel speaks of scans, and promises that a correction waits on the server until
+        the administrator approves it, and that the labels it corrects go back to a reviewer or
+        are accepted as the server says. Only a server of version 1, serving version 1 of the
+        BoneHub format, keeps those promises."""
         self.delayDisplay("Server version")
-        for version in ("0.4.0", "0.4.3"):
+        for version in ("1.0.0", "1.3.2"):
             self.assertTrue(self._connect(server_version=version).connected, version)
-        for version in (None, "0.3.0", "0.5.0"):
+        for version in (None, "0.4.0", "2.0.0"):
             with self.assertRaises(QCClientError, msg=f"version {version}") as context:
                 self._connect(server_version=version)
-            self.assertIn("0.4", str(context.exception), "the editor is told which version it takes")
+            self.assertIn("1.x", str(context.exception), "the editor is told which version it takes")
+        for version in (None, "0.3.0", "2.0"):
+            with self.assertRaises(QCClientError, msg=f"format {version}") as context:
+                self._connect(schema_version=version)
+            self.assertIn("BoneHub format", str(context.exception))
+        self.assertTrue(self._connect(schema_version="1.1").connected, "a minor version only adds to the format")
 
         self.assertTrue(self._connect(edits_need_review=True).edits_need_review)
         self.assertFalse(self._connect(edits_need_review=False).edits_need_review)
         self.assertTrue(BoneHubQCSession().edits_need_review, "until the server says, corrections are reviewed")
+
+    def test_TheWorkingFolderIsTheScansPath(self):
+        """A scan's files are kept at its path in the database, under the names the database
+        gives them, and go with the folders left empty above them; a key that would lead out
+        of the working folder is refused."""
+        self.delayDisplay("Working folder")
+        workspace = Path(tempfile.mkdtemp())
+        session = BoneHubQCSession(workspace=workspace)
+        session.handout = {"assignment_id": "a1", "scan_key": self.SCAN_KEY}
+        folder = workspace / "ds-0001" / "sub-000001" / "scan-01"
+        self.assertEqual(session.scan_folder(), folder)
+        self.assertTrue(folder.is_dir())
+        self.assertEqual(session.corrected_path(), folder / f"corrected{SEGMENTATION_SUFFIX}")
+
+        # Another scan of the subject keeps the subject's folder; the last one takes it, and the
+        # dataset's, along.
+        other = workspace / "ds-0001" / "sub-000001" / "scan-02"
+        other.mkdir()
+        session.discard_files(folder)
+        self.assertFalse(folder.exists())
+        self.assertTrue(other.is_dir())
+        session.discard_files(other)
+        self.assertEqual(list(workspace.iterdir()), [], "nothing is left of the scans")
+        self.assertTrue(workspace.is_dir(), "the working folder itself stays")
+
+        for key in ("../outside", "ds-0001/../../outside", "/etc", "C:/Windows", "ds-0001\\sub-000001"):
+            with self.assertRaises(QCClientError, msg=key):
+                session.folder_of(key)
 
     def test_TheQualityCheckIsPutIntoWords(self):
         """What the handout says of each label, of the requests and of the history, as the
@@ -1809,13 +1890,17 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             ({"state": "pending", "painted": True}, True, "to review"),
             ({"state": "pending", "painted": True, "edited_by": "eddie"}, True, "to review"),
             ({"state": "pending", "painted": False, "edited_by": "eddie"}, False, "to review: removed by eddie"),
-            ({"state": "kept", "painted": True}, True, "kept"),
+            ({"state": "kept", "painted": True, "reviewed": True}, True, "kept"),
+            ({"state": "kept", "painted": True, "reviewed": False}, True, "kept"),
             ({"state": "removed", "painted": False}, False, "removed"),
             ({"state": "removed", "painted": False, "by": "rita"}, False, "removed (rita)"),
         ):
             text, _tip, flag = _labelState(label, present)
             self.assertEqual((text, flag), (wanted, None), label)
         self.assertEqual(_labelState(None, True)[0], "added", "a label the editor added")
+        # A label is kept because it was reviewed, or because the server does not review its origin.
+        self.assertIn("reviewed on this database already", describe(state="kept", reviewed=True)[1])
+        self.assertIn("does not review labels of its origin", describe(state="kept", reviewed=False)[1])
 
         # The history, step by step.
         review = {
@@ -1830,13 +1915,29 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         back = {"action": "return", "by": "admin", "role": "admin", "details": {"to": "edit"}}
         self.assertEqual((_eventWho(back), _eventText(back)), ("the administrator", "sent it back to the editors"))
         self.assertEqual(_eventText({"action": "escalate"}), "sent it to the administrator")
+        self.assertEqual(_eventText({"action": "reject"}), "rejected the scan as a whole")
 
-        # Requests about no single label.
+        # Requests about no single label, which are the administrator's.
         self.assertEqual(
             _requestText({"by": "admin", "role": "admin", "comment": "Check the knee too."}),
             'The administrator sent it back to the editors: "Check the knee too."',
         )
-        self.assertEqual(_requestText({"by": "rita", "role": "reviewer"}), "rita rejected the subject as a whole.")
+        self.assertEqual(_requestText({"by": "admin", "role": "admin"}), "The administrator sent it back to the editors.")
+
+        # What the database says of the scan: the labels and their origins are the labels table's.
+        html = _scanInfoHtml({
+            "dataset_info": {"name": "TotalSegmentator CT", "license": "CC-BY-4.0"},
+            "subject_info": {"source_subject_id": "s0011", "gender": "F"},
+            "scan_info": {
+                "source_scan_id": "s0011/ct.nii.gz", "modality": "CT", "age": 63, "remarks": None,
+                "segmentation": {"SKULL": "source"}, "mesh": {"SKULL": "derived:bonehub-mesher@1.0"},
+            },
+        })
+        for words in ("TotalSegmentator CT", "<i>Subject</i>", "s0011", "<i>Scan</i>", "s0011/ct.nii.gz", "modality", "63"):
+            self.assertIn(words, html)
+        for words in ("CC-BY-4.0", "remarks", "segmentation", "mesh", "bonehub-mesher"):
+            self.assertNotIn(words, html)
+        self.assertEqual(_scanInfoHtml({}), "")
 
         # Server timestamps are UTC; the panel shows them in local time.
         local = datetime(2026, 9, 24, 14, 3, 5, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
@@ -1864,12 +1965,12 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
     def test_SegmentationSurvivesTheRoundTrip(self):
         """Loaded from a BoneHub file and written back: same labels, voxels and voxel grid."""
         self.delayDisplay("Round trip through the scene")
-        logic, _volumeNode, expected = self._buildSubject()
+        logic, _volumeNode, expected = self._buildScan()
 
         self.assertEqual(logic.segmentLabelValues(), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        written = logic.exportReviewedSegmentation(path)
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        written = logic.exportCorrectedSegmentation(path)
         self.assertEqual(written, {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
 
         image, values, segments = self._readBoneHubFile(path)
@@ -1884,19 +1985,19 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
     def test_RenamingASegmentRelabelsIt(self):
         """The fix for a bone segmented on the wrong side is to rename its segment."""
         self.delayDisplay("Relabelling by renaming")
-        logic, _volumeNode, expected = self._buildSubject()
+        logic, _volumeNode, expected = self._buildScan()
         segmentation = logic.segmentationNode.GetSegmentation()
         segmentation.GetSegment(segmentation.GetSegmentIdBySegmentName("FEMUR_LEFT")).SetName("FEMUR_RIGHT")
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_RIGHT": 710000002})
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportCorrectedSegmentation(path), {"SKULL": 100000000, "FEMUR_RIGHT": 710000002})
         _image, values, _segments = self._readBoneHubFile(path)
         self.assertTrue(np.array_equal(values, np.where(expected == 710000001, 710000002, expected)))
 
     def test_TagsInTheFileNameTheSegments(self):
         """As in the dataset's reader, a segment's BoneHubValue tag says which label it is."""
         self.delayDisplay("Segments named by their tags")
-        logic, _volumeNode, _expected = self._buildSubject(names={1: "Segment_1"})
+        logic, _volumeNode, _expected = self._buildScan(names={1: "Segment_1"})
         self.assertEqual(logic.segmentLabelValues(), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
         segmentation = logic.segmentationNode.GetSegmentation()
         for segmentId in _segmentIds(segmentation):
@@ -1905,7 +2006,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
     def test_AMissingBoneCanBeAdded(self):
         """A bone the automatic segmentation missed: the editor adds its label and paints it."""
         self.delayDisplay("Adding a missing bone")
-        logic, volumeNode, expected = self._buildSubject()
+        logic, volumeNode, expected = self._buildScan()
 
         segmentId = logic.addEmptySegment("FEMUR_RIGHT")
         with self.assertRaises(RuntimeError):
@@ -1916,9 +2017,9 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         painted[7:10, 2:6, 2:7] = 1
         slicer.util.updateSegmentBinaryLabelmapFromArray(painted, logic.segmentationNode, segmentId, volumeNode)
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
         self.assertEqual(
-            logic.exportReviewedSegmentation(path),
+            logic.exportCorrectedSegmentation(path),
             {"SKULL": 100000000, "FEMUR_LEFT": 710000001, "FEMUR_RIGHT": 710000002},
         )
         image, values, _segments = self._readBoneHubFile(path)
@@ -1931,7 +2032,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         That grid is the image's on the server, which refuses an upload on any other.
         """
         self.delayDisplay("Segmentation without its image")
-        logic, volumeNode, expected = self._buildSubject(withImage=False)
+        logic, volumeNode, expected = self._buildScan(withImage=False)
         self.assertIsNone(logic.imageVolumeNode)
         self.assertIsNotNone(volumeNode, "a volume stands in for the image")
         self.assertEqual(slicer.util.arrayFromVolume(volumeNode).shape, expected.shape)
@@ -1947,8 +2048,8 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             skull, logic.segmentationNode, segmentation.GetSegmentIdBySegmentName("SKULL"), volumeNode
         )
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_RIGHT": 710000002})
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportCorrectedSegmentation(path), {"SKULL": 100000000, "FEMUR_RIGHT": 710000002})
         image, values, _segments = self._readBoneHubFile(path)
         wanted = np.where(expected == 710000001, 710000002, np.where(skull > 0, 100000000, 0))
         self.assertTrue(np.array_equal(values, wanted), "every voxel has the label it was given")
@@ -1956,23 +2057,23 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         self._assertSameGridAsTheImage(image, self.segmentationPath)
         self.delayDisplay("Written back on the image's grid, without the image")
 
-    def test_ASubjectIsSegmentedFromScratchOnItsImage(self):
+    def test_AScanIsSegmentedFromScratchOnItsImage(self):
         """Sent the image only: the editor adds each label, paints it, and it goes back on the image's grid."""
         self.delayDisplay("Segmenting from scratch")
-        logic, volumeNode, expected = self._buildSubject(withSegmentation=False)
+        logic, volumeNode, expected = self._buildScan(withSegmentation=False)
         self.assertIs(volumeNode, logic.imageVolumeNode, "the image is the grid")
         self.assertIsNotNone(logic.segmentationNode, "an empty segmentation waits to be painted")
         self.assertEqual(logic.segmentLabelValues(), {})
         with self.assertRaises(RuntimeError):
-            logic.exportReviewedSegmentation(Path(tempfile.mkdtemp()) / f"empty{SEGMENTATION_SUFFIX}")
+            logic.exportCorrectedSegmentation(Path(tempfile.mkdtemp()) / f"empty{SEGMENTATION_SUFFIX}")
 
         for name, value in (("SKULL", 100000000), ("FEMUR_LEFT", 710000001)):
             segmentId = logic.addEmptySegment(name)
             painted = (expected == value).astype(np.uint8)
             slicer.util.updateSegmentBinaryLabelmapFromArray(painted, logic.segmentationNode, segmentId, volumeNode)
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportCorrectedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
         image, values, _segments = self._readBoneHubFile(path)
         self.assertTrue(np.array_equal(values, expected), "every voxel has the label it was painted with")
         self._assertSameGridAsTheImage(image, self.imagePath)
@@ -1982,18 +2083,18 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         """A model for every label of the segmentation sent, which changes nothing of what is
         written back; none for a segmentation made here to paint from scratch."""
         self.delayDisplay("3D models")
-        logic, _volumeNode, expected = self._buildSubject()
+        logic, _volumeNode, expected = self._buildScan()
         self.assertFalse(logic.segmentationShownIn3D(), "only when asked")
 
-        logic.loadSubject({"subject_key": "001_000001"}, self.segmentationPath, self.imagePath, show3D=True)
+        logic.loadScan({"scan_key": self.SCAN_KEY}, self.segmentationPath, self.imagePath, show3D=True)
         self.assertTrue(logic.segmentationShownIn3D())
         for segmentId in _segmentIds(logic.segmentationNode.GetSegmentation()):
             surface = vtk.vtkPolyData()
             logic.segmentationNode.GetClosedSurfaceRepresentation(segmentId, surface)
             self.assertGreater(surface.GetNumberOfPoints(), 0, f"'{segmentId}' has a model")
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportCorrectedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
         image, values, _segments = self._readBoneHubFile(path)
         self.assertTrue(np.array_equal(values, expected), "the models change no voxel")
         self._assertSameGridAsTheImage(image, self.imagePath)
@@ -2001,7 +2102,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         logic.showSegmentationIn3D(False)
         self.assertFalse(logic.segmentationShownIn3D(), "taken away, not only hidden")
 
-        logic.loadSubject({"subject_key": "001_000002"}, None, self.imagePath, show3D=True)
+        logic.loadScan({"scan_key": self.OTHER_SCAN_KEY}, None, self.imagePath, show3D=True)
         self.assertFalse(logic.segmentationShownIn3D(), "a segmentation to paint from scratch was not sent")
 
     def test_EachBoneCanBeDrawnInAColourOfItsOwn(self):
@@ -2015,9 +2116,9 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
                 self.assertTrue(0.0 <= channel <= 1.0, f"{index} gave a channel outside 0..1")
             self.assertGreater(max(abs(a - b) for a, b in zip(colour, following)), 0.25, f"{index} and the next")
 
-        logic, _volumeNode, expected = self._buildSubject()
+        logic, _volumeNode, expected = self._buildScan()
         self.assertFalse(logic.distinctColoursShown(), "only when asked")
-        logic.loadSubject({"subject_key": "001_000001"}, self.segmentationPath, self.imagePath, distinctColours=True)
+        logic.loadScan({"scan_key": self.SCAN_KEY}, self.segmentationPath, self.imagePath, distinctColours=True)
         self.assertTrue(logic.distinctColoursShown())
 
         def assertColour(actual, wanted, message):
@@ -2026,7 +2127,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
 
         def colour(name):
             """The segment's colour, which the Segment Editor lists, checked against the colour
-            the views draw. Looked up afresh: loading a subject replaces the segmentation."""
+            the views draw. Looked up afresh: loading a scan replaces the segmentation."""
             segmentation = logic.segmentationNode.GetSegmentation()
             segmentId = segmentation.GetSegmentIdBySegmentName(name)
             listed = tuple(segmentation.GetSegment(segmentId).GetColor())
@@ -2037,8 +2138,8 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         assertColour(colour("SKULL"), distinct_color(0), "coloured in label order")
         assertColour(colour("FEMUR_LEFT"), distinct_color(1), "coloured in label order")
 
-        path = Path(tempfile.mkdtemp()) / f"reviewed{SEGMENTATION_SUFFIX}"
-        self.assertEqual(logic.exportReviewedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
+        path = Path(tempfile.mkdtemp()) / f"corrected{SEGMENTATION_SUFFIX}"
+        self.assertEqual(logic.exportCorrectedSegmentation(path), {"SKULL": 100000000, "FEMUR_LEFT": 710000001})
         image, values, _segments = self._readBoneHubFile(path)
         self.assertTrue(np.array_equal(values, expected), "the colours change no voxel")
         for i, (name, value) in enumerate((("SKULL", 100000000), ("FEMUR_LEFT", 710000001))):
@@ -2067,41 +2168,41 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         assertColour(colour("SKULL"), label_color(100000000), "renamed to a label: that label's colour")
         assertColour(colour("NOT_A_BONE"), label_color(100000000), "no label any more: the colour it had")
 
-        logic.loadSubject({"subject_key": "001_000002"}, None, self.imagePath, distinctColours=True)
+        logic.loadScan({"scan_key": self.OTHER_SCAN_KEY}, None, self.imagePath, distinctColours=True)
         self.assertFalse(logic.distinctColoursShown(), "nothing painted yet")
         logic.addEmptySegment("FEMUR_LEFT")
         logic.showDistinctColours(True)
         self.assertTrue(logic.distinctColoursShown(), "a bone painted from scratch is coloured too")
-        assertColour(colour("FEMUR_LEFT"), distinct_color(0), "a new subject starts from the first colour")
+        assertColour(colour("FEMUR_LEFT"), distinct_color(0), "a new scan starts from the first colour")
 
-    def test_ASubjectNeedsItsImageOrItsSegmentation(self):
-        """A subject sent neither is not loaded, and the last subject goes all the same."""
+    def test_AScanNeedsItsImageOrItsSegmentation(self):
+        """A scan sent neither is not loaded, and the last scan goes all the same."""
         self.delayDisplay("Neither image nor segmentation")
-        logic, volumeNode, _expected = self._buildSubject()
+        logic, volumeNode, _expected = self._buildScan()
         lastSegmentation = logic.segmentationNode
         with self.assertRaises(RuntimeError):
-            logic.loadSubject({"subject_key": "001_000002"}, None, None)
+            logic.loadScan({"scan_key": self.OTHER_SCAN_KEY}, None, None)
         self.assertIsNone(logic.segmentationNode)
         self.assertIsNone(logic.referenceVolumeNode)
         self.assertIsNone(logic.imageVolumeNode)
-        self.assertFalse(slicer.mrmlScene.IsNodePresent(lastSegmentation), "the last subject's segmentation is gone")
+        self.assertFalse(slicer.mrmlScene.IsNodePresent(lastSegmentation), "the last scan's segmentation is gone")
         self.assertFalse(slicer.mrmlScene.IsNodePresent(volumeNode))
         self.assertEqual(logic.segmentLabelValues(), {})
 
-    def test_ANewSubjectStartsFromAnEmptyScene(self):
-        """Nothing of the last subject may stay under the next one and pass for part of it."""
-        self.delayDisplay("An empty scene for every subject")
-        logic, _volumeNode, _expected = self._buildSubject()
-        lastSubject = [logic.segmentationNode, logic.imageVolumeNode]
+    def test_ANewScanStartsFromAnEmptyScene(self):
+        """Nothing of the last scan may stay under the next one and pass for part of it."""
+        self.delayDisplay("An empty scene for every scan")
+        logic, _volumeNode, _expected = self._buildScan()
+        lastScan = [logic.segmentationNode, logic.imageVolumeNode]
         # What an editor or a failed load can leave behind: a note, and a volume nobody tracks.
         leftovers = [
-            slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "a note on 001_000001"),
-            slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "001_000001 lost track of"),
+            slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", f"a note on {self.SCAN_KEY}"),
+            slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", f"{self.SCAN_KEY} lost track of"),
         ]
 
-        logic.loadSubject({"subject_key": "001_000002"}, self.segmentationPath, self.imagePath)
-        for node in lastSubject + leftovers:
-            self.assertFalse(slicer.mrmlScene.IsNodePresent(node), f"'{node.GetName()}' outlived its subject")
+        logic.loadScan({"scan_key": self.OTHER_SCAN_KEY}, self.segmentationPath, self.imagePath)
+        for node in lastScan + leftovers:
+            self.assertFalse(slicer.mrmlScene.IsNodePresent(node), f"'{node.GetName()}' outlived its scan")
         self.assertEqual(slicer.mrmlScene.GetNodesByClass("vtkMRMLSegmentationNode").GetNumberOfItems(), 1)
         self.assertEqual(slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode").GetNumberOfItems(), 1)
         self.assertEqual(slicer.mrmlScene.GetNodesByClass("vtkMRMLMarkupsNode").GetNumberOfItems(), 0)
@@ -2109,11 +2210,11 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
     def test_UnknownSegmentsAreRefused(self):
         """A segment that is not a BoneHub label must be caught here, not by the server."""
         self.delayDisplay("Unknown segments")
-        logic, _volumeNode, _expected = self._buildSubject()
+        logic, _volumeNode, _expected = self._buildScan()
         logic.segmentationNode.GetSegmentation().AddEmptySegment("MY_SCRATCH_SEGMENT", "MY_SCRATCH_SEGMENT")
         self.assertIsNone(logic.segmentLabelValues()["MY_SCRATCH_SEGMENT"])
         with self.assertRaises(RuntimeError):
-            logic.exportReviewedSegmentation(Path(slicer.app.temporaryPath) / f"refused{SEGMENTATION_SUFFIX}")
+            logic.exportCorrectedSegmentation(Path(slicer.app.temporaryPath) / f"refused{SEGMENTATION_SUFFIX}")
         self.delayDisplay("Refused, as it should be")
 
     # ---------------------------------------------------------------- helpers
@@ -2144,8 +2245,8 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
             sessionModule.BoneHubQCClient = original
         return session
 
-    def _buildSubject(self, withImage=True, withSegmentation=True, names=None):
-        """A small subject in the scene: a BoneHub segmentation of two labels, and its image.
+    def _buildScan(self, withImage=True, withSegmentation=True, names=None):
+        """A small scan in the scene: a BoneHub segmentation of two labels, and its image.
 
         The image is oblique, so a mix-up between Slicer's RAS and the files' LPS, or of the
         axis order, shows. Both files are always written, as the server keeps them, but only
@@ -2166,7 +2267,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         image.SetOrigin((13.5, -21.25, -4.75))
         cos, sin = np.cos(0.3), np.sin(0.3)
         image.SetDirection((cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0))
-        imagePath = folder / "001_000001.nii.gz"
+        imagePath = folder / "image.nii.gz"
         sitk.WriteImage(image, str(imagePath))
 
         # Written as the dataset's converters write it, on the grid of the image as read back.
@@ -2174,7 +2275,7 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
         numbers = np.zeros(shape, dtype=np.uint8)
         numbers[expected == 100000000] = 1
         numbers[expected == 710000001] = 2
-        segmentationPath = folder / f"001_000001{SEGMENTATION_SUFFIX}"
+        segmentationPath = folder / f"segmentation{SEGMENTATION_SUFFIX}"
         geometry = (reference.GetOrigin(), reference.GetSpacing(), reference.GetDirection())
         write_segmentation(numbers, [("SKULL", 100000000), ("FEMUR_LEFT", 710000001)], geometry, segmentationPath)
         if names:
@@ -2186,8 +2287,8 @@ class BoneHubQualityCheckTest(ScriptedLoadableModuleTest):
 
         logic = BoneHubQualityCheckLogic()
         logic.session.labels = LabelMap(self.LABELS)
-        logic.loadSubject(
-            {"subject_key": "001_000001"},
+        logic.loadScan(
+            {"scan_key": self.SCAN_KEY},
             segmentationPath if withSegmentation else None,
             imagePath if withImage else None,
         )
